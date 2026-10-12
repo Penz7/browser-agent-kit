@@ -344,6 +344,8 @@ const handlers = {
     let dataUrl;
     try {
       if (fast) {
+        const now = await chrome.tabs.get(tab.id);
+        if (!now.active) throw new Error('Could not bring the tab to the front, so a screenshot of it cannot be taken right now.');
         for (let attempt = 0; ; attempt++) {
           try { dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }); break; }
           catch (e) {

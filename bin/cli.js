@@ -16,7 +16,13 @@ const EXTENSION = path.join(ROOT, 'extension');
 const PORT = process.env.BROWSER_KIT_PORT || '7851';
 const [cmd, ...rest] = process.argv.slice(2);
 
-const mcpEntry = () => ({ command: 'node', args: [SERVER], env: { BROWSER_KIT_PORT: PORT } });
+// --token: generate a shared secret so only clients that know it can use the hub (recommended).
+let TOKEN = process.env.BROWSER_KIT_TOKEN || '';
+if (rest.includes('--token') && !TOKEN) {
+  const { randomBytes } = await import('node:crypto');
+  TOKEN = randomBytes(24).toString('hex');
+}
+const mcpEntry = () => ({ command: 'node', args: [SERVER], env: { BROWSER_KIT_PORT: PORT, ...(TOKEN ? { BROWSER_KIT_TOKEN: TOKEN } : {}) } });
 
 function mergeJson(file, mutate) {
   let data = {};
@@ -37,17 +43,18 @@ function setupCodex() {
   const file = path.join(os.homedir(), '.codex', 'config.toml');
   const existing = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
   if (/^\[mcp_servers\.browser\]/m.test(existing)) return file + ' (already configured)';
-  const block = `\n[mcp_servers.browser]\ncommand = "node"\nargs = [${JSON.stringify(SERVER)}]\n\n[mcp_servers.browser.env]\nBROWSER_KIT_PORT = "${PORT}"\n`;
+  const block = `\n[mcp_servers.browser]\ncommand = "node"\nargs = [${JSON.stringify(SERVER)}]\n\n[mcp_servers.browser.env]\nBROWSER_KIT_PORT = "${PORT}"\n${TOKEN ? `BROWSER_KIT_TOKEN = ${JSON.stringify(TOKEN)}\n` : ''}`;
   fs.mkdirSync(path.dirname(file), { recursive: true });
   fs.appendFileSync(file, (existing && !existing.endsWith('\n') ? '\n' : '') + block);
   return file;
 }
 
 function setupClaude() {
-  const r = spawnSync('claude', ['mcp', 'add', 'browser', '--scope', 'user', '--env', `BROWSER_KIT_PORT=${PORT}`, '--', 'node', SERVER], { stdio: 'inherit' });
+  const envArgs = ['--env', `BROWSER_KIT_PORT=${PORT}`, ...(TOKEN ? ['--env', `BROWSER_KIT_TOKEN=${TOKEN}`] : [])];
+  const r = spawnSync('claude', ['mcp', 'add', 'browser', '--scope', 'user', ...envArgs, '--', 'node', SERVER], { stdio: 'inherit' });
   if (r.error || r.status !== 0) {
     console.log('\n`claude` CLI not found or failed. Run this yourself:\n');
-    console.log(`  claude mcp add browser --scope user --env BROWSER_KIT_PORT=${PORT} -- node ${SERVER}\n`);
+    console.log(`  claude mcp add browser --scope user ${envArgs.join(' ')} -- node ${SERVER}\n`);
     return null;
   }
   return 'claude mcp (user scope)';
@@ -79,6 +86,9 @@ const AGENTS = {
 };
 
 function printNext() {
+  if (TOKEN) console.log(`
+Shared token (also paste it into the extension: icon -> Settings -> "Shared token"):
+  ${TOKEN}`);
   console.log(`
 Next steps:
   1. Chrome -> chrome://extensions -> enable "Developer mode" -> "Load unpacked" -> choose:
@@ -123,6 +133,7 @@ switch (cmd) {
       console.log(`Usage: browser-agent-kit setup <${Object.keys(AGENTS).join('|')}> [...]`);
       console.log('  antigravity --workspace writes ./.agents/mcp_config.json for the current project instead of the global file.');
       console.log('  json prints a generic mcpServers block for Cline, Roo Code, OpenCode, etc.');
+      console.log('  --token generates a shared secret and puts it in the config (paste the same value into the extension Settings).');
       process.exit(1);
     }
     for (const n of names) {

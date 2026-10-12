@@ -2,6 +2,7 @@
 import { JSDOM } from 'jsdom';
 import { agentDom } from '../../extension/dom.js';
 import { parseCombo, parseModifiers, macCommand, MOD } from '../../extension/keys.js';
+import { hostAllowed } from '../../extension/settings.js';
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 
@@ -145,5 +146,13 @@ assert(k.key.text === 'A', 'shift+a types uppercase A');
 assert(parseModifiers('ctrl+shift') === (MOD.ctrl | MOD.shift), 'parseModifiers');
 let threw = false; try { parseCombo('banana'); } catch { threw = true; }
 assert(threw, 'unknown key names throw');
+
+// allowlist
+const allowAll = { allowAll: true, allowedSites: [] };
+assert(hostAllowed('https://x.com/', allowAll) && hostAllowed('about:blank', allowAll), 'allowAll permits http(s) and about:blank');
+assert(!hostAllowed('file:///etc/passwd', allowAll) && !hostAllowed('javascript:alert(1)', allowAll) && !hostAllowed('chrome://settings', allowAll), 'file:, javascript:, chrome: are never allowed, even with allowAll');
+const listed = { allowAll: false, allowedSites: ['example.com', '*.google.com'] };
+assert(hostAllowed('https://sub.example.com/a', listed) && hostAllowed('https://mail.google.com/', listed) && !hostAllowed('https://example.com.evil.com/', listed), 'allowlist matches subdomains but not suffix tricks');
+assert(!hostAllowed('file:///etc/passwd', { allowAll: false, allowedSites: ['*'] }), 'wildcard list still blocks file:');
 
 console.log('\nAll DOM/key tests passed.');

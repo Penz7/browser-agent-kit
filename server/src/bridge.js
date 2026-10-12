@@ -9,9 +9,10 @@ export const NOT_CONNECTED =
   'and its port setting matches the server (default 7851). Click the extension icon to see its connection status.';
 
 export class Bridge {
-  constructor({ port, token = '', log = () => {} }) {
+  constructor({ port, token = '', extensionId = '', log = () => {} }) {
     this.port = port;
     this.token = token;
+    this.extensionId = extensionId;
     this.log = log;
     this.mode = null;
     this.wss = null;
@@ -66,11 +67,23 @@ export class Bridge {
     });
   }
 
+  // Browsers always send an Origin header on WebSocket upgrades; Node clients do not.
+  // A web page (http/https/file/null origin) must never reach either endpoint, otherwise any
+  // site the user visits could drive the browser or impersonate the extension.
   #onConnection(sock, req) {
     const path = (req.url || '/').split('?')[0];
-    if (path === '/extension') this.#onExtension(sock);
-    else if (path === '/client') this.#onLeaf(sock);
-    else sock.close(1008, 'unknown path');
+    const origin = req.headers.origin;
+    const fromExtension = typeof origin === 'string' && /^chrome-extension:\/\/[a-p]{32}$/.test(origin) &&
+      (!this.extensionId || origin === `chrome-extension://${this.extensionId}`);
+    if (path === '/extension') {
+      if (origin !== undefined && !fromExtension) { this.log(`rejected /extension from origin ${origin}`); sock.close(1008, 'forbidden origin'); return; }
+      this.#onExtension(sock);
+    } else if (path === '/client') {
+      if (origin !== undefined) { this.log(`rejected /client from origin ${origin}`); sock.close(1008, 'forbidden origin'); return; }
+      this.#onLeaf(sock);
+    } else {
+      sock.close(1008, 'unknown path');
+    }
   }
 
   #onExtension(sock) {
@@ -107,9 +120,16 @@ export class Bridge {
 
   #onLeaf(sock) {
     this.leaves.add(sock);
+    let authed = !this.token;
     sock.on('message', async (buf) => {
       let msg;
       try { msg = JSON.parse(buf.toString()); } catch { return; }
+      if (msg.type === 'hello') {
+        if (this.token && msg.token !== this.token) { sock.close(4001, 'bad token'); return; }
+        authed = true;
+        return;
+      }
+      if (!authed) { sock.close(4001, 'hello with token required'); return; }
       if (!msg.id || !msg.method) return;
       try {
         const result = await this.#requestExt(msg.method, msg.params, msg.timeout);
@@ -140,6 +160,7 @@ export class Bridge {
     if (this.closed) return;
     const sock = new WebSocket(`ws://127.0.0.1:${this.port}/client`);
     this.leafSocket = sock;
+    sock.on('open', () => sock.send(JSON.stringify({ type: 'hello', token: this.token })));
     sock.on('message', (buf) => {
       let msg;
       try { msg = JSON.parse(buf.toString()); } catch { return; }

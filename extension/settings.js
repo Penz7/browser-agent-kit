@@ -43,11 +43,11 @@ function matchHost(host, pattern) {
 }
 
 export function hostAllowed(url, settings) {
-  if (settings.allowAll) return true;
   let parsed;
   try { parsed = new URL(url); } catch { return false; }
+  if (settings.allowAll) return parsed.protocol === 'about:' || /^https?:$/.test(parsed.protocol);
   if (parsed.protocol === 'about:') return true; // about:blank
-  if (!/^(https?|file):$/.test(parsed.protocol)) return false;
+  if (!/^https?:$/.test(parsed.protocol)) return false; // file:, chrome:, javascript:, data: are never controllable
   const host = parsed.hostname.toLowerCase();
   return (settings.allowedSites || []).some((p) => matchHost(host, p));
 }

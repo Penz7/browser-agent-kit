@@ -3,6 +3,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
+import path from 'node:path';
+import os from 'node:os';
+import fs from 'node:fs';
 import { Bridge } from './bridge.js';
 
 const cfg = {
@@ -12,8 +15,24 @@ const cfg = {
   autoScreenshot: process.env.BROWSER_KIT_AUTO_SCREENSHOT !== '0',
   format: process.env.BROWSER_KIT_IMAGE_FORMAT === 'png' ? 'png' : 'jpeg',
   quality: Number(process.env.BROWSER_KIT_IMAGE_QUALITY || 85),
-  debug: process.env.BROWSER_KIT_DEBUG === '1'
+  debug: process.env.BROWSER_KIT_DEBUG === '1',
+  extensionId: process.env.BROWSER_KIT_EXTENSION_ID || '',
+  // Local files the agent may hand to a web page. Dot-directories (~/.ssh, ~/.aws, ~/.gemini...) are always refused.
+  uploadRoots: (process.env.BROWSER_KIT_UPLOAD_ROOTS || [os.homedir(), os.tmpdir(), '/tmp'].join(path.delimiter))
+    .split(path.delimiter).filter(Boolean).map((p) => path.resolve(p))
 };
+
+function checkUploadPath(p) {
+  if (typeof p !== 'string' || !path.isAbsolute(p)) throw new Error(`Upload path must be absolute: ${p}`);
+  let real;
+  try { real = fs.realpathSync(p); } catch { throw new Error(`File not found: ${p}`); }
+  if (!fs.statSync(real).isFile()) throw new Error(`Not a regular file: ${p}`);
+  const inRoot = cfg.uploadRoots.some((r) => real === r || real.startsWith(r + path.sep));
+  if (!inRoot) throw new Error(`Refusing to upload ${p}: outside the allowed folders (${cfg.uploadRoots.join(', ')}). Set BROWSER_KIT_UPLOAD_ROOTS to change.`);
+  const rel = real.split(path.sep);
+  if (rel.some((seg) => seg.startsWith('.') && seg !== '.' && seg !== '..')) throw new Error(`Refusing to upload ${p}: hidden files and dot-directories (.ssh, .aws, .config...) are never shared with web pages.`);
+  return real;
+}
 const log = (m) => { if (cfg.debug) process.stderr.write(`[browser-agent-kit] ${m}\n`); };
 
 const INSTRUCTIONS = `You control the user's real Chrome through the Browser Agent Kit extension.
@@ -28,7 +47,7 @@ Workflow:
 8. Do not click buttons that are likely to open alert/confirm dialogs unless necessary; the kit auto-closes dialogs and logs them to read_console_messages.
 9. If a tool says the site is not allowed, stop and ask the user to allow it in the extension popup.`;
 
-const bridge = new Bridge({ port: cfg.port, token: cfg.token, log });
+const bridge = new Bridge({ port: cfg.port, token: cfg.token, extensionId: cfg.extensionId, log });
 await bridge.start();
 
 const server = new McpServer({ name: 'browser-agent-kit', version: '0.1.0' }, { instructions: INSTRUCTIONS });
@@ -259,8 +278,9 @@ def('file_upload', {
   description: 'Attach local files to a file input. ref should point at the <input type=file> or the upload button/area near it.',
   inputSchema: { tabId, ref: z.string(), paths: z.array(z.string()).min(1).describe('Absolute local file paths.') }
 }, async ({ tabId: tab, ref, paths }) => {
-  await bridge.request('file_upload', { tabId: tab, ref, paths }, 60000);
-  return after(tab, `Attached ${paths.length} file(s) to ${ref}.`);
+  const safe = paths.map(checkUploadPath);
+  await bridge.request('file_upload', { tabId: tab, ref, paths: safe }, 60000);
+  return after(tab, `Attached ${safe.length} file(s) to ${ref}.`);
 });
 
 def('resize_window', {

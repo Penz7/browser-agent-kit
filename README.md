@@ -136,6 +136,18 @@ Muốn nhẹ hơn, chọn Settings → Input mode → **Fast**:
 - **Chống prompt injection**: mọi nội dung lấy từ trang được bọc trong `<untrusted_page_content>` kèm ghi chú là dữ liệu, không phải lệnh.
 - **Service worker MV3**: giữ kết nối bằng ping 20s từ server và `chrome.alarms` 30s; tự reconnect khi server khởi động lại.
 
+## Bảo mật
+
+Mô hình: extension giữ quyền `debugger` + `scripting` + `<all_urls>`, nên **ai nói chuyện được với hub WebSocket là điều khiển được Chrome**. Kit chặn các đường vào đó như sau:
+
+- **Chỉ nhận kết nối từ chính extension và từ process local**. Trình duyệt luôn gửi header `Origin` khi mở WebSocket; hub từ chối mọi Origin `http/https/file/null` trên cả `/extension` lẫn `/client`, chỉ chấp nhận `chrome-extension://…` trên `/extension`. Một trang web độc hại bạn vô tình mở không thể tự nối vào `ws://127.0.0.1:7851` để ra lệnh hay giả làm extension. Có thể ghim đúng ID extension bằng `BROWSER_KIT_EXTENSION_ID`.
+- **Token chia sẻ cho process local**: chạy `node bin/cli.js setup <agent> --token` để sinh token ngẫu nhiên, ghi vào config MCP, rồi dán cùng giá trị vào Settings của extension. Khi có token, cả extension lẫn agent thứ hai (leaf) đều phải xưng token trước khi gửi lệnh. Nên bật trên máy dùng chung.
+- **Upload file**: `file_upload` chỉ nhận file thường nằm trong `$HOME` hoặc thư mục tạm (`BROWSER_KIT_UPLOAD_ROOTS` để đổi), và **không bao giờ** nhận file/thư mục ẩn (`.ssh`, `.aws`, `.gemini`, `.config`…).
+- **Allowlist site**: `file:`, `chrome:`, `javascript:`, `data:` không bao giờ được điều khiển, kể cả khi bật Allow all sites. Allowlist so khớp theo host và subdomain, không bị lừa bởi `example.com.evil.com`.
+- **Nội dung trang là dữ liệu**: mọi text lấy từ trang được bọc `<untrusted_page_content>`; ref của phần tử sống trong isolated world nên script của trang không đọc/sửa được.
+- **Overlay** nằm trong shadow DOM, chỉ chèn text bằng `textContent`, không có HTML từ dữ liệu ngoài.
+- Việc còn lại thuộc về bạn: agent được phép chạy JS và đọc trang trên site bạn đã cho phép, nên chỉ Allow những site cần thiết và xác nhận trước các thao tác không đảo ngược được.
+
 ## Biến môi trường của server
 
 | Biến | Mặc định | Ý nghĩa |
@@ -147,6 +159,8 @@ Muốn nhẹ hơn, chọn Settings → Input mode → **Fast**:
 | `BROWSER_KIT_IMAGE_FORMAT` | jpeg | `png` nếu cần ảnh nét hơn |
 | `BROWSER_KIT_IMAGE_QUALITY` | 85 | chất lượng jpeg |
 | `BROWSER_KIT_DEBUG` | 0 | `1` để log ra stderr |
+| `BROWSER_KIT_EXTENSION_ID` | rỗng | ghim ID extension được phép nối vào hub |
+| `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | thư mục được phép dùng cho `file_upload` |
 
 ## Sự cố thường gặp
 

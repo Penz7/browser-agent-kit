@@ -15,7 +15,7 @@ function fakeExtension() {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     const tryConnect = () => {
-      const ws = new WebSocket(`ws://127.0.0.1:${PORT}/extension`);
+      const ws = new WebSocket(`ws://127.0.0.1:${PORT}/extension`, { headers: { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' } });
       ws.on('open', () => { ws.send(JSON.stringify({ type: 'hello', token: 'secret', version: 'test' })); resolve(ws); });
       ws.on('error', () => { if (++attempts > 50) reject(new Error('could not reach server')); else setTimeout(tryConnect, 100); });
       ws.on('message', (buf) => {
@@ -88,6 +88,27 @@ r = await client.callTool({ name: 'browser_batch', arguments: { steps: [
 ] } });
 const batchShots = r.content.filter((c) => c.type === 'image').length;
 assert(!r.isError && batchShots === 1, 'browser_batch runs all steps and returns exactly one screenshot');
+
+// Security: browser origins must be rejected on both endpoints, and leaves must know the token.
+const closeCode = (url, opts, firstMsg) => new Promise((resolve) => {
+  const w = new WebSocket(url, opts);
+  w.on('open', () => { if (firstMsg) w.send(JSON.stringify(firstMsg)); });
+  w.on('close', (code) => resolve(code));
+  w.on('error', () => resolve('error'));
+  setTimeout(() => { w.terminate(); resolve('open'); }, 1500);
+});
+const callsBefore = calls.length;
+assert(await closeCode(`ws://127.0.0.1:${PORT}/client`, { headers: { Origin: 'https://evil.example' } }) === 1008, 'web-page origin is rejected on /client');
+assert(await closeCode(`ws://127.0.0.1:${PORT}/extension`, { headers: { Origin: 'https://evil.example' } }, { type: 'hello', token: 'secret' }) === 1008, 'web-page origin is rejected on /extension even with the token');
+assert(await closeCode(`ws://127.0.0.1:${PORT}/extension`, { headers: { Origin: 'null' } }) === 1008, 'null origin (sandboxed page / file://) is rejected');
+assert(await closeCode(`ws://127.0.0.1:${PORT}/client`, {}, { id: 'x', method: 'tabs.context', params: {} }) === 4001, 'leaf without hello/token cannot issue commands');
+assert(await closeCode(`ws://127.0.0.1:${PORT}/client`, {}, { type: 'hello', token: 'wrong' }) === 4001, 'leaf with wrong token is closed');
+assert(calls.length === callsBefore, 'rejected connections never reached the extension');
+
+r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: [path.join(process.env.HOME || '/', '.ssh', 'id_rsa')] } });
+assert(r.isError && /hidden files|not found/i.test(r.content[0].text), 'file_upload refuses dot-directories');
+r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: ['/etc/passwd'] } });
+assert(r.isError && /outside the allowed folders/.test(r.content[0].text), 'file_upload refuses files outside allowed roots');
 
 // Second server process on the same port must relay through the first (leaf mode).
 const t2 = new StdioClientTransport({ command: process.execPath, args: [path.join(here, '..', 'src', 'index.js')], env });
