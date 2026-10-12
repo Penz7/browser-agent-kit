@@ -126,10 +126,34 @@ export function agentDom(action, args) {
       lines,
       truncated: lines.length >= maxLines,
       iframes: d.querySelectorAll('iframe').length,
+      ...frameInfo(),
       viewport: { width: w.innerWidth, height: w.innerHeight },
       scroll: { x: Math.round(w.scrollX), y: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight }
     };
   };
+
+  // Index path from the top frame (window.parent.frames order) and the rectangles of this frame's own containers.
+  // Indexed access to a cross-origin parent's frames is allowed, so this works for third-party iframes too.
+  const framePath = () => {
+    const p = [];
+    try {
+      let win = w;
+      while (win !== win.top) {
+        const par = win.parent;
+        let idx = -1;
+        for (let i = 0; i < par.length; i++) { if (par[i] === win) { idx = i; break; } }
+        if (idx < 0) return null;
+        p.unshift(idx);
+        win = par;
+      }
+    } catch { return null; }
+    return p;
+  };
+  const containers = () => Array.from(d.querySelectorAll('iframe,frame')).map((el) => {
+    const r = el.getBoundingClientRect();
+    return { x: r.left + (el.clientLeft || 0), y: r.top + (el.clientTop || 0), w: r.width, h: r.height, hidden: isHidden(el) || r.width === 0 || r.height === 0 };
+  });
+  const frameInfo = () => ({ path: framePath(), containers: containers(), url: location.href, viewport: { width: w.innerWidth, height: w.innerHeight } });
 
   const center = (el) => {
     const r = el.getBoundingClientRect();
@@ -174,6 +198,12 @@ export function agentDom(action, args) {
       const top = withOverlayHidden(() => d.elementFromPoint(x, y));
       const target = el ? ((top && el.contains(top)) ? top : el) : top;
       if (!target) return { error: `Nothing is rendered at (${Math.round(x)}, ${Math.round(y)}). Take a screenshot and try again.` };
+      if (!el && (target.tagName === 'IFRAME' || target.tagName === 'FRAME')) {
+        // The point is inside a child frame: tell the caller which one and where, so it can click inside that frame.
+        const idx = Array.from(d.querySelectorAll('iframe,frame')).indexOf(target);
+        const r = target.getBoundingClientRect();
+        return { frameIndex: idx, x, y, innerX: x - r.left - (target.clientLeft || 0), innerY: y - r.top - (target.clientTop || 0) };
+      }
       const covered = !!(el && top && !el.contains(top) && !top.contains(el));
       const button = args.button === 'right' ? 2 : args.button === 'middle' ? 1 : 0;
       const base = { bubbles: true, cancelable: true, composed: true, view: w, clientX: x, clientY: y, screenX: x, screenY: y, button, ...modsOf(args.modifiers) };
@@ -360,14 +390,45 @@ export function agentDom(action, args) {
         if (s > 0) { if (inView(el)) s += 1; scored.push({ s, el }); }
       }
       scored.sort((a, b) => b.s - a.s);
-      return { url: location.href, matches: scored.slice(0, limit).map(({ s, el }) => ({ score: s, line: describe(el) })) };
+      return { url: location.href, matches: scored.slice(0, limit).map(({ s, el }) => ({ score: s, line: describe(el) })), ...frameInfo() };
     }
 
     case 'text': {
       const t = d.body ? d.body.innerText : '';
       const offset = args.offset || 0;
       const limit = args.limit || 20000;
-      return { url: location.href, title: d.title, total: t.length, offset, text: t.slice(offset, offset + limit) };
+      return { url: location.href, title: d.title, total: t.length, offset, text: t.slice(offset, offset + limit), ...frameInfo() };
+    }
+
+    // Whole visible text of this frame (used when merging frames before paginating).
+    case 'textAll':
+      return { url: location.href, title: d.title, text: d.body ? d.body.innerText : '', ...frameInfo() };
+
+    case 'frameInfo':
+      return frameInfo();
+
+    // Scroll this frame's container at `index` into view (called in the parent frame of a target frame).
+    case 'showContainer': {
+      const el = d.querySelectorAll('iframe,frame')[args.index];
+      if (!el) return { error: 'frame container not found' };
+      el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+      return { ok: true };
+    }
+
+    // Does clicking this element likely open a file picker? Used by Fast mode to switch to a real (debugger) click,
+    // because only a real click can be intercepted and synthetic clicks cannot open the picker at all.
+    case 'uploadLike': {
+      let el = args.ref ? elOf(args.ref) : withOverlayHidden(() => d.elementFromPoint(args.x, args.y));
+      if (!el) return { upload: false };
+      const isFile = (n) => !!n && n.tagName === 'INPUT' && n.type === 'file';
+      if (isFile(el)) return { upload: true };
+      if (el.tagName === 'LABEL' && el.control && isFile(el.control)) return { upload: true };
+      let n = el;
+      for (let i = 0; n && n !== d.body && n !== d.documentElement && i < 4; i++, n = n.parentElement) {
+        if (n.querySelector && n.querySelector('input[type=file]')) return { upload: true };
+      }
+      const words = /upload|attach|choose file|browse|select file|add file|add photo|add image|tải lên|tải ảnh|chọn tệp|chọn file|đính kèm/i;
+      return { upload: words.test(nameOf(el)) && !!d.querySelector('input[type=file]') };
     }
 
     case 'formInput': {

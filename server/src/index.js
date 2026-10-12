@@ -205,7 +205,8 @@ def('read_page', {
 }, async ({ tabId: tab, filter, maxLines }) => {
   const r = await bridge.request('read_page', { tabId: tab, mode: filter || 'full', maxLines }, 30000);
   const head = `Page "${r.title}" ${r.url}\nviewport ${r.viewport.width}x${r.viewport.height}, scrollY ${r.scroll.y}/${r.scroll.pageHeight}` +
-    (r.iframes ? `, ${r.iframes} iframe(s) (their contents are not listed; use screenshots for them)` : '') +
+    (r.iframes ? `, ${r.iframes} iframe(s) listed inline (their refs look like f12_ref_3 and work with every tool)` : '') +
+    (r.unreadableFrames ? `, ${r.unreadableFrames} iframe(s) could not be read (use screenshots and coordinates for those)` : '') +
     (r.truncated ? `\nOutput truncated at ${maxLines || 600} lines; use filter "interactive", find, or get_page_text for more.` : '');
   return ok(T(head), T(untrusted(r.url, r.lines.join('\n') || '(no visible elements)')));
 });

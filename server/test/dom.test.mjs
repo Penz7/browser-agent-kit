@@ -3,6 +3,7 @@ import { JSDOM } from 'jsdom';
 import { agentDom } from '../../extension/dom.js';
 import { parseCombo, parseModifiers, macCommand, MOD } from '../../extension/keys.js';
 import { hostAllowed } from '../../extension/settings.js';
+import { parseRef, prefixRef, prefixLines, buildFrameTree, childFrameId, toMainCoords } from '../../extension/frames.js';
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 
@@ -122,6 +123,35 @@ dom.window.scrollBy = (o) => { scrolled = scrolled ? { left: scrolled.left + o.l
 dom.window.document.elementFromPoint = () => null;
 const sc = await agentDom('scroll', { dx: 0, dy: 300 });
 assert(scrolled && scrolled.top === 300 && scrolled.left === 0 && sc.scroller === 'window', 'animated scroll adds up to the requested distance on window.scrollBy');
+
+// frames: pure helpers
+assert(parseRef('f12_ref_3').frameId === 12 && parseRef('f12_ref_3').ref === 'ref_3' && parseRef('ref_3').frameId === 0, 'parseRef splits frame-qualified refs');
+assert(prefixRef('ref_3', 12) === 'f12_ref_3' && prefixRef('ref_3', 0) === 'ref_3', 'prefixRef qualifies refs only for child frames');
+assert(prefixLines(['[ref_1] button "Go"'], 7)[0] === '[f7_ref_1] button "Go"', 'prefixLines rewrites ref markers');
+const tree = buildFrameTree([
+  { frameId: 0, path: [], containers: [{ x: 100, y: 200, w: 300, h: 150, hidden: false }, { x: 0, y: 0, w: 0, h: 0, hidden: true }] },
+  { frameId: 5, path: [0], containers: [{ x: 10, y: 20, w: 50, h: 50, hidden: false }] },
+  { frameId: 9, path: [0, 0], containers: [] },
+  { frameId: 6, path: [1], containers: [] }
+]);
+assert(tree.get(5).offset.x === 100 && tree.get(5).offset.y === 200 && tree.get(5).visible, 'child frame offset comes from its container');
+assert(tree.get(9).offset.x === 110 && tree.get(9).offset.y === 220 && tree.get(9).depth === 2 && tree.get(9).parentId === 5, 'nested frame offsets accumulate');
+assert(tree.get(6).visible === false, 'hidden container marks its frame invisible');
+assert(childFrameId(tree, 0, 0) === 5 && childFrameId(tree, 5, 0) === 9 && childFrameId(tree, 0, 3) === null, 'childFrameId maps container index to frame id');
+assert(toMainCoords(tree, 9, { x: 1, y: 2 }).x === 111 && toMainCoords(tree, 0, { x: 1, y: 2 }).x === 1, 'toMainCoords adds the frame offset');
+
+// frames: in-page info (jsdom is a top-level window)
+const finfo = agentDom('frameInfo', {});
+assert(Array.isArray(finfo.path) && finfo.path.length === 0 && Array.isArray(finfo.containers) && finfo.viewport.width > 0, 'frameInfo reports an empty path for the top frame');
+
+// uploadLike
+document.body.insertAdjacentHTML('beforeend', '<div id="up"><button id="upbtn">Upload photo</button><input type="file" id="fileinp"></div><button id="plain">Plain</button>');
+const upText = agentDom('snapshot', { mode: 'interactive', maxLines: 100 }).lines.join('\n');
+const upRef = /\[(ref_\d+)\] button "Upload photo"/.exec(upText)[1];
+const plainRef = /\[(ref_\d+)\] button "Plain"/.exec(upText)[1];
+assert(agentDom('uploadLike', { ref: upRef }).upload === true, 'uploadLike recognises an upload button next to a file input');
+assert(agentDom('uploadLike', { ref: plainRef }).upload === false, 'uploadLike ignores ordinary buttons');
+document.getElementById('up').remove(); document.getElementById('plain').remove();
 
 // probe (wait_for)
 assert(agentDom('probe', { text: 'sign IN' }).found === true, 'probe finds visible text case-insensitively');

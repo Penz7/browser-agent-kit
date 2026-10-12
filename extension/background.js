@@ -3,6 +3,7 @@ import { getSettings, hostAllowed, normalizeUrl } from './settings.js';
 import * as cdp from './cdp.js';
 import { agentDom } from './dom.js';
 import { parseCombo, parseModifiers, macCommand, MOD } from './keys.js';
+import { parseRef, prefixRef, prefixLines, buildFrameTree, childFrameId, toMainCoords } from './frames.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 const DEFAULT_MAX_WIDTH = 1024;
@@ -206,17 +207,54 @@ function scheduleDetach(tabId, s) {
 
 async function fastMode() { return (await cfg()).inputMode !== 'real'; }
 
-async function inject(tabId, action, args) {
+async function inject(tabId, action, args, frameId = 0) {
   let results;
   try {
-    results = await chrome.scripting.executeScript({ target: { tabId }, func: agentDom, args: [action, args || {}] });
+    const target = frameId ? { tabId, frameIds: [frameId] } : { tabId };
+    results = await chrome.scripting.executeScript({ target, func: agentDom, args: [action, args || {}] });
   } catch (e) {
-    throw new Error(`Cannot run on this page: ${e.message}`);
+    throw new Error(`Cannot run on this page${frameId ? ` (frame ${frameId})` : ''}: ${e.message}`);
   }
   const r = results && results[0];
   if (!r) throw new Error('Script injection returned nothing (page may still be loading).');
   if (r.result && r.result.error) throw new Error(r.result.error);
   return r.result;
+}
+
+// Run an action in every frame of the tab. Frames the extension cannot script are skipped. Returns [{ frameId, result }].
+async function injectAll(tabId, action, args) {
+  let results;
+  try {
+    results = await chrome.scripting.executeScript({ target: { tabId, allFrames: true }, func: agentDom, args: [action, args || {}] });
+  } catch {
+    return [{ frameId: 0, result: await inject(tabId, action, args) }];
+  }
+  return (results || []).filter((r) => r && r.result && !r.result.error).map((r) => ({ frameId: r.frameId || 0, result: r.result }));
+}
+
+// Geometry of all frames: offsets in main-frame CSS px, visibility, parent links.
+async function frameTree(tabId) {
+  const rs = await injectAll(tabId, 'frameInfo', {});
+  return buildFrameTree(rs.map((r) => ({ frameId: r.frameId, ...r.result })));
+}
+
+// Scroll the ancestors' iframe containers so the target frame is on screen, then return the fresh tree.
+async function ensureFrameVisible(tabId, frameId) {
+  let tree = await frameTree(tabId);
+  const f = tree.get(frameId);
+  if (!f || !frameId) return tree;
+  const main = tree.get(0);
+  const vp = (main && main.viewport) || { width: 1e9, height: 1e9 };
+  const offscreen = (r) => !r || r.y < 0 || r.x < 0 || r.y + r.h > vp.height || r.x + r.w > vp.width;
+  if (!offscreen(f.rect)) return tree;
+  // Walk from the top down: each parent scrolls the container of the next frame on the path into view.
+  const chain = [];
+  for (let cur = f; cur && cur.parentId != null; cur = tree.get(cur.parentId)) chain.unshift(cur);
+  for (const cur of chain) {
+    try { await inject(tabId, 'showContainer', { index: cur.path[cur.path.length - 1] }, cur.parentId); } catch { /* parent not scriptable */ }
+  }
+  await sleep(60);
+  return frameTree(tabId);
 }
 
 async function waitForLoad(tabId, timeout = 15000) {
@@ -263,9 +301,16 @@ const scaleFor = (vp, maxWidth) => Math.min(1, (maxWidth || DEFAULT_MAX_WIDTH) /
 // Converts a point from screenshot pixel space (or a ref) into CSS viewport pixels.
 async function resolvePoint(tabId, p) {
   if (p.ref) {
-    const r = await inject(tabId, 'resolve', { ref: p.ref });
+    const { frameId, ref } = parseRef(p.ref);
+    if (!frameId) {
+      const r = await inject(tabId, 'resolve', { ref });
+      await sleep(80);
+      return r;
+    }
+    const tree = await ensureFrameVisible(tabId, frameId);
+    const r = await inject(tabId, 'resolve', { ref }, frameId);
     await sleep(80);
-    return r;
+    return { ...toMainCoords(await frameTree(tabId).catch(() => tree), frameId, r), frameId };
   }
   if (typeof p.x !== 'number' || typeof p.y !== 'number') throw new Error('Provide coordinate [x, y] or a ref from read_page/find.');
   const s = scaleFor(await viewport(tabId), p.maxWidth);
@@ -497,13 +542,37 @@ const handlers = {
   async click(p) {
     const button = p.button || 'left';
     const clickCount = p.clickCount || 1;
-    if (await fastMode()) {
+    const { frameId, ref } = parseRef(p.ref);
+    let fast = await fastMode();
+    if (fast) {
+      // Upload buttons need a real (debugger) click: synthetic clicks cannot open a file picker, and only real ones get intercepted.
+      const tab = await prepareLite(p.tabId);
+      let probe = { upload: false };
+      try { probe = await inject(tab.id, 'uploadLike', ref ? { ref } : await resolvePoint(tab.id, p), frameId); } catch { /* ignore */ }
+      if (probe.upload) fast = false;
+    }
+    if (fast) {
       const tab = await prepareLite(p.tabId);
       const pre = await resolvePoint(tab.id, p); // scrolls the target into view and tells the cursor where to go
       await cursorTo(tab.id, `Click: ${pre.name || ''}`, pre);
-      const args = { ref: p.ref, button, clickCount, modifiers: p.modifiers, ...(p.ref ? {} : { x: pre.x, y: pre.y }) };
       const started = Date.now();
-      const r = await inject(tab.id, 'click', args);
+      let r;
+      if (ref) {
+        r = await inject(tab.id, 'click', { ref, button, clickCount, modifiers: p.modifiers }, frameId);
+        if (frameId) r = toMainCoords(await frameTree(tab.id), frameId, r);
+      } else {
+        // Coordinates: descend into child frames until the click lands on a real element.
+        let fid = 0, x = pre.x, y = pre.y, tree = null;
+        for (let depth = 0; ; depth++) {
+          r = await inject(tab.id, 'click', { x, y, button, clickCount, modifiers: p.modifiers }, fid);
+          if (r.frameIndex == null) break;
+          tree = tree || await frameTree(tab.id);
+          const child = childFrameId(tree, fid, r.frameIndex);
+          if (child == null || depth >= 4) throw new Error('That point is inside an iframe the kit cannot script in Fast mode. Switch the extension to Real input mode, or click by ref from read_page.');
+          fid = child; x = r.innerX; y = r.innerY;
+        }
+        r = { ...r, x: pre.x, y: pre.y };
+      }
       await settle(tab.id);
       const t = await chrome.tabs.get(tab.id);
       const hint = r.hint || downloadHint(await downloadsSince(started));
@@ -590,7 +659,10 @@ const handlers = {
       if (p.ref || typeof p.x === 'number') pt = await resolvePoint(tab.id, p);
       else { const vp = await viewport(tab.id); pt = { x: vp.width / 2, y: vp.height / 2 }; }
       showActivity(tab.id, label, { x: pt.x, y: pt.y, ring: false });
-      const r = await inject(tab.id, 'scroll', { x: pt.x, y: pt.y, dx, dy }); // animated inside the page
+      const { frameId, ref } = parseRef(p.ref);
+      const r = frameId
+        ? await inject(tab.id, 'scroll', { ref, dx, dy }, frameId)
+        : await inject(tab.id, 'scroll', { x: pt.x, y: pt.y, dx, dy }); // animated inside the page
       await sleep(120);
       return r;
     }
@@ -619,27 +691,74 @@ const handlers = {
   async read_page({ tabId, mode, maxLines }) {
     const tab = await allowedTab(tabId);
     showActivity(tab.id, 'Đọc trang');
-    return { tabId: tab.id, ...(await inject(tab.id, 'snapshot', { mode, maxLines })) };
+    const cap = maxLines || 600;
+    const rs = await injectAll(tab.id, 'snapshot', { mode, maxLines: cap });
+    const main = (rs.find((r) => r.frameId === 0) || rs[0]).result;
+    const tree = buildFrameTree(rs.map((r) => ({ frameId: r.frameId, ...r.result })));
+    const lines = [...main.lines];
+    let listed = 0, skipped = 0, truncated = main.truncated;
+    // Child frames, top-down and in reading order, each introduced by a header line and indented.
+    const frames = rs.filter((r) => r.frameId !== 0).map((r) => ({ ...r, info: tree.get(r.frameId) }))
+      .filter((r) => r.info).sort((a, b) => a.info.depth - b.info.depth || a.info.offset.y - b.info.offset.y || a.info.offset.x - b.info.offset.x);
+    for (const f of frames) {
+      if (!f.info.visible || !f.result.lines.length) { skipped++; continue; }
+      if (lines.length >= cap) { truncated = true; skipped++; continue; }
+      const pad = '  '.repeat(f.info.depth - 1);
+      const rc = f.info.rect;
+      lines.push(`${pad}iframe f${f.frameId} "${f.result.title || ''}" ${f.result.url} at (${Math.round(rc.x)}, ${Math.round(rc.y)}) ${Math.round(rc.w)}x${Math.round(rc.h)}`);
+      for (const l of prefixLines(f.result.lines, f.frameId)) { if (lines.length >= cap) { truncated = true; break; } lines.push(pad + '  ' + l); }
+      listed++;
+    }
+    return { tabId: tab.id, url: main.url, title: main.title, lines, truncated, viewport: main.viewport, scroll: main.scroll, iframes: listed, hiddenFrames: skipped, unreadableFrames: Math.max(0, main.iframes - listed - skipped) };
   },
 
   async find({ tabId, query, limit }) {
     const tab = await allowedTab(tabId);
     showActivity(tab.id, `Tìm: ${query}`);
-    return inject(tab.id, 'find', { query, limit });
+    const rs = await injectAll(tab.id, 'find', { query, limit });
+    const tree = buildFrameTree(rs.map((r) => ({ frameId: r.frameId, ...r.result })));
+    const main = (rs.find((r) => r.frameId === 0) || rs[0]).result;
+    const matches = [];
+    for (const r of rs) {
+      const info = tree.get(r.frameId);
+      if (r.frameId && (!info || !info.visible)) continue;
+      for (const m of r.result.matches) matches.push({ score: m.score, line: prefixLines([m.line], r.frameId)[0] + (r.frameId ? `  (in iframe f${r.frameId})` : '') });
+    }
+    matches.sort((a, b) => b.score - a.score);
+    return { url: main.url, matches: matches.slice(0, limit || 10) };
   },
 
   async get_text({ tabId, offset, limit }) {
     const tab = await allowedTab(tabId);
     showActivity(tab.id, 'Đọc nội dung');
-    return inject(tab.id, 'text', { offset, limit });
+    const rs = await injectAll(tab.id, 'textAll', {});
+    const tree = buildFrameTree(rs.map((r) => ({ frameId: r.frameId, ...r.result })));
+    const main = (rs.find((r) => r.frameId === 0) || rs[0]).result;
+    let text = main.text || '';
+    for (const r of rs) {
+      const info = tree.get(r.frameId);
+      if (!r.frameId || !info || !info.visible || !(r.result.text || '').trim()) continue;
+      text += `\n\n--- iframe f${r.frameId} ${r.result.url} ---\n${r.result.text}`;
+    }
+    const off = offset || 0, lim = limit || 20000;
+    return { url: main.url, title: main.title, total: text.length, offset: off, text: text.slice(off, off + lim) };
   },
 
   async form_input({ tabId, fields }) {
     const tab = await allowedTab(tabId);
     showActivity(tab.id, `Điền ${fields.length} ô`);
-    const r = await inject(tab.id, 'formInput', { fields });
+    // Fields may live in different frames: run each frame's batch there and report under the agent's ref names.
+    const byFrame = new Map();
+    fields.forEach((f, i) => { const { frameId, ref } = parseRef(f.ref); if (!byFrame.has(frameId)) byFrame.set(frameId, []); byFrame.get(frameId).push({ i, field: { ...f, ref } }); });
+    const results = new Array(fields.length);
+    for (const [frameId, items] of byFrame) {
+      let r;
+      try { r = await inject(tab.id, 'formInput', { fields: items.map((x) => x.field) }, frameId); }
+      catch (e) { items.forEach((x) => { results[x.i] = { ref: fields[x.i].ref, error: e.message }; }); continue; }
+      items.forEach((x, k) => { results[x.i] = { ...r.results[k], ref: fields[x.i].ref }; });
+    }
     await settle(tab.id);
-    return r;
+    return { results };
   },
 
   async evaluate({ tabId, expression }) {
@@ -683,14 +802,22 @@ const handlers = {
       await settle(tab.id);
       return { uploaded: paths, via: 'file dialog' };
     }
-    await inject(tab.id, 'markUpload', { ref });
+    const q = parseRef(ref);
+    await inject(tab.id, 'markUpload', { ref: q.ref }, q.frameId);
     try {
-      const { root } = await cdp.send(tab.id, 'DOM.getDocument', { depth: 0 });
-      const { nodeId } = await cdp.send(tab.id, 'DOM.querySelector', { nodeId: root.nodeId, selector: '[data-ak-upload]' });
-      if (!nodeId) throw new Error('file input not found');
+      // pierce:true reaches same-process iframes; cross-origin (out-of-process) iframes are separate debugger targets.
+      const { root } = await cdp.send(tab.id, 'DOM.getDocument', { depth: -1, pierce: true });
+      let nodeId = null;
+      if (!q.frameId) ({ nodeId } = await cdp.send(tab.id, 'DOM.querySelector', { nodeId: root.nodeId, selector: '[data-ak-upload]' }));
+      if (!nodeId) {
+        const { searchId, resultCount } = await cdp.send(tab.id, 'DOM.performSearch', { query: '[data-ak-upload]' });
+        if (resultCount > 0) ({ nodeIds: [nodeId] } = await cdp.send(tab.id, 'DOM.getSearchResults', { searchId, fromIndex: 0, toIndex: 1 }));
+        cdp.send(tab.id, 'DOM.discardSearchResults', { searchId }).catch(() => {});
+      }
+      if (!nodeId) throw new Error(q.frameId ? 'That file input is inside a cross-origin iframe, which file_upload cannot reach. Click the upload button in that iframe first; the kit intercepts the dialog, then call file_upload without a ref.' : 'file input not found');
       await cdp.send(tab.id, 'DOM.setFileInputFiles', { files: paths, nodeId });
     } finally {
-      await inject(tab.id, 'unmarkUpload', {}).catch(() => {});
+      await inject(tab.id, 'unmarkUpload', {}, q.frameId).catch(() => {});
     }
     await settle(tab.id);
     return { uploaded: paths, via: 'input' };
@@ -708,8 +835,14 @@ const handlers = {
       let found;
       if (networkIdle) found = cdp.networkQuiet(tab.id, 500);
       else {
-        let r;
-        try { r = await inject(tab.id, 'probe', { text, selector, ref }); } catch { r = { found: false }; } // mid-navigation
+        let r = { found: false };
+        try {
+          if (ref) { const q = parseRef(ref); r = await inject(tab.id, 'probe', { ref: q.ref }, q.frameId); }
+          else {
+            const rs = await injectAll(tab.id, 'probe', { text, selector });
+            r = rs.map((x) => x.result).find((x) => x.found) || rs[0]?.result || r;
+          }
+        } catch { /* mid-navigation */ }
         found = !!r.found; detail = r.detail;
       }
       if (gone ? !found : found) return { ok: true, waited: Date.now() - start, what, detail };
