@@ -12,7 +12,7 @@ Codex · Claude Code · Antigravity · Cursor · Gemini CLI · Windsurf · Cline
 
 ---
 
-Một extension Chrome + một MCP server. Agent nào nói được MCP là dùng được, cùng một bộ tool, cùng một hành vi: mở tab trong group riêng, viền sáng trên tab đang thao tác, click theo phần tử, đọc trang có cấu trúc, chụp màn hình, chạy JS, đọc console, nút **Dừng** cho bạn.
+Một extension Chrome + một MCP server. Agent nào nói được MCP là dùng được, cùng một bộ tool, cùng một hành vi: mở tab trong group riêng, viền sáng và con trỏ nhìn thấy được trên tab đang thao tác, click theo phần tử, cuộn mượt, tải file lên không cần hộp thoại hệ điều hành, đọc trang có cấu trúc, chụp màn hình, chạy JS, đọc console, nút **Dừng** cho bạn.
 
 | | |
 |---|---|
@@ -149,7 +149,7 @@ Tên tool giống Claude in Chrome nên prompt và skill viết cho Claude dùng
 | `form_input` | điền nhiều ô một lượt, bắn đúng event cho React / Vue |
 | `javascript_tool` | chạy JS trong trang qua CDP, không bị CSP chặn |
 | `read_console_messages` · `read_network_requests` | debug trang |
-| `file_upload` | gắn file local vào `<input type=file>` |
+| `file_upload` | gắn file local. Click nút Upload không bao giờ hiện hộp thoại chọn file của hệ điều hành: kit chặn nó và `file_upload` điền vào (không cần ref); nếu không thì truyền ref của `<input type=file>` hoặc nút upload |
 | `resize_window` | đổi kích thước cửa sổ |
 | `browser_batch` | chạy nhiều bước, trả một screenshot cuối |
 
@@ -167,7 +167,7 @@ Bấm icon → **Settings**.
 | JavaScript dialogs | auto-accept | `alert/confirm/prompt` luôn được tự đóng để không treo |
 | Input mode | Real | xem bảng trên |
 | Release debugger after idle | 60s | 0 = giữ luôn (cần nếu muốn bắt console liên tục) |
-| Overlay + tên hiển thị | bật, "AI agent" | viền tím và thanh trạng thái |
+| Overlay + tên hiển thị | bật, "AI agent" | viền tím, thanh trạng thái và con trỏ trượt tới mỗi điểm click hoặc cuộn (ẩn khỏi ảnh chụp) |
 | Tab group + tên + màu | bật, "Agent", tím | gom tab agent mở |
 
 Biến môi trường của server (đặt trong config MCP):

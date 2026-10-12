@@ -12,7 +12,7 @@ Codex · Claude Code · Antigravity · Cursor · Gemini CLI · Windsurf · Cline
 
 ---
 
-One Chrome extension plus one MCP server. Every agent that speaks MCP gets the same tools and the same behaviour: its own tab group, a glowing frame on the tab it is working on, element-level clicking, structured page reading, screenshots, JavaScript, console and network logs, and a **Stop** button for you.
+One Chrome extension plus one MCP server. Every agent that speaks MCP gets the same tools and the same behaviour: its own tab group, a glowing frame and a visible cursor on the tab it is working on, element-level clicking, smooth scrolling, file uploads without the OS dialog, structured page reading, screenshots, JavaScript, console and network logs, and a **Stop** button for you.
 
 | | |
 |---|---|
@@ -148,7 +148,7 @@ Tool names mirror Claude in Chrome, so prompts and skills written for Claude car
 | `form_input` | fill several fields at once with the right events for React / Vue |
 | `javascript_tool` | run JS in the page through CDP, not blocked by CSP |
 | `read_console_messages` · `read_network_requests` | debugging |
-| `file_upload` | attach local files to `<input type=file>` |
+| `file_upload` | attach local files. Clicking an upload button never shows the OS file dialog: the kit intercepts it and `file_upload` fills it (no ref needed); otherwise pass the ref of the `<input type=file>` or the upload button |
 | `resize_window` | resize the window |
 | `browser_batch` | run several steps, one screenshot at the end |
 
@@ -166,7 +166,7 @@ Extension icon → **Settings**.
 | JavaScript dialogs | auto-accept | `alert/confirm/prompt` are always auto-closed so nothing hangs |
 | Input mode | Real | see table above |
 | Release debugger after idle | 60s | 0 keeps it attached (needed for continuous console capture) |
-| Overlay + display name | on, "AI agent" | purple frame and status bar |
+| Overlay + display name | on, "AI agent" | purple frame, status bar and a cursor that glides to each click or scroll (hidden from screenshots) |
 | Tab group + name + color | on, "Agent", purple | groups tabs the agent opens |
 
 Server environment variables (set in the MCP config):

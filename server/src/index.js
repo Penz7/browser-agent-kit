@@ -278,12 +278,13 @@ def('read_network_requests', {
 
 def('file_upload', {
   title: 'Upload files',
-  description: 'Attach local files to a file input. ref should point at the <input type=file> or the upload button/area near it.',
-  inputSchema: { tabId, ref: z.string(), paths: z.array(z.string()).min(1).describe('Absolute local file paths.') }
+  description: 'Attach local files to the page. Clicking an upload button never shows the OS file dialog: the kit intercepts it, ' +
+    'and calling file_upload right after fills that dialog (no ref needed). Otherwise pass ref for the <input type=file> or the upload button/area near it.',
+  inputSchema: { tabId, ref: z.string().optional().describe('Element ref of the file input or upload button. Optional after a click opened the file dialog.'), paths: z.array(z.string()).min(1).describe('Absolute local file paths.') }
 }, async ({ tabId: tab, ref, paths }) => {
   const safe = paths.map(checkUploadPath);
-  await bridge.request('file_upload', { tabId: tab, ref, paths: safe }, 60000);
-  return after(tab, `Attached ${safe.length} file(s) to ${ref}.`);
+  const r = await bridge.request('file_upload', { tabId: tab, ref, paths: safe }, 60000);
+  return after(tab, `Attached ${safe.length} file(s)${r && r.via === 'file dialog' ? ' to the file dialog the page opened' : ref ? ` to ${ref}` : ' to the page\'s file input'}.`);
 });
 
 def('resize_window', {

@@ -28,6 +28,9 @@ Claude in Chrome: `tabs_context`, `tabs_create`, `tabs_close`, `navigate`, `comp
 - Click: `computer` with `action: "left_click"` and `ref: "ref_12"` (preferred) or `coordinate: [x, y]`
   taken from the **latest** screenshot.
 - Fill forms: `form_input` with several `{ref, value}` at once (text, select by label, checkbox true/false).
+- Upload files: click the upload button, then call `file_upload` with the paths. The OS file dialog is
+  intercepted, never shown, and `file_upload` fills it (no ref needed). You can also skip the click and
+  pass the ref of the `<input type=file>` or the upload area.
   Use `computer` `type` for inputs that need real key events (autocomplete, editors).
 - Keys: `computer` `action: "key"`, `text: "Enter"` / `"ctrl+a"` / `"cmd+shift+t"`.
 - Scroll: `computer` `action: "scroll"`, `scroll_direction`, `scroll_amount` (ticks of 100px), optional `ref`.

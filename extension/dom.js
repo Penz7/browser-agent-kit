@@ -249,13 +249,29 @@ export function agentDom(action, args) {
         const canX = /(auto|scroll|overlay)/.test(cs.overflowX) && n.scrollWidth > n.clientWidth + 1;
         if ((dy && canY) || (dx && canX)) { scroller = n; break; }
       }
-      if (scroller) scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' }); else w.scrollBy({ left: dx, top: dy, behavior: 'instant' });
-      return { scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight, viewportWidth: w.innerWidth, scroller: scroller ? scroller.tagName.toLowerCase() : 'window' };
+      const info = () => ({ scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight, viewportWidth: w.innerWidth, scroller: scroller ? scroller.tagName.toLowerCase() : 'window' });
+      const by = (l, t) => { if (scroller) scroller.scrollBy({ left: l, top: t, behavior: 'instant' }); else w.scrollBy({ left: l, top: t, behavior: 'instant' }); };
+      // Ease the distance over a few frames (~180ms) so the page glides instead of jumping. executeScript awaits the promise.
+      const steps = 8;
+      const ease = (t) => 1 - Math.pow(1 - t, 3);
+      return new Promise((resolve) => {
+        let i = 0, doneX = 0, doneY = 0;
+        const tick = () => {
+          i++;
+          const f = ease(i / steps);
+          const tx = Math.round(dx * f), ty = Math.round(dy * f);
+          by(tx - doneX, ty - doneY); doneX = tx; doneY = ty;
+          if (i < steps) setTimeout(tick, 22); else resolve(info());
+        };
+        tick();
+      });
     }
 
     case 'overlay': {
       let host = d.getElementById(OVERLAY_ID);
       if (args.state === 'hide') { if (host) host.remove(); return { ok: true }; }
+      if (args.state === 'suspend') { if (host) host.style.display = 'none'; return { ok: true }; } // out of screenshots, position kept
+      if (args.state === 'resume') { if (host) host.style.display = ''; return { ok: true }; }
       if (!host) {
         host = d.createElement('div');
         host.id = OVERLAY_ID;
@@ -270,7 +286,12 @@ export function agentDom(action, args) {
           'button{all:initial;cursor:pointer;background:#ff5370;color:#fff;font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:6px}' +
           '.ring{position:fixed;width:28px;height:28px;margin:-14px 0 0 -14px;border:3px solid #ffd166;border-radius:50%;pointer-events:none;animation:akr .7s ease-out forwards}' +
           '@keyframes akr{from{transform:scale(.4);opacity:1}to{transform:scale(1.7);opacity:0}}' +
-          '</style><div class="frame"></div><div class="bar"><b></b><span class="msg"></span><button>Dừng</button></div>';
+          // Virtual cursor: glides to the next click/scroll point so a person can follow what the agent is doing.
+          '.cur{position:fixed;left:0;top:0;width:22px;height:22px;pointer-events:none;display:none;transform-origin:4px 3px;' +
+          'transition:left .18s ease-out,top .18s ease-out;filter:drop-shadow(0 1px 2px rgba(0,0,0,.55))}' +
+          '.cur.press{animation:akc .22s ease-out}@keyframes akc{50%{transform:scale(.78)}}' +
+          '</style><div class="frame"></div><div class="bar"><b></b><span class="msg"></span><button>Dừng</button></div>' +
+          '<svg class="cur" viewBox="0 0 24 24"><path d="M4 3l6.5 17 2.6-6.9L20 10.5z" fill="#7c5cff" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>';
         sh.querySelector('button').onclick = () => {
           try { chrome.runtime.sendMessage({ type: 'agent-stop' }); } catch { /* no runtime */ }
           sh.querySelector('.msg').textContent = 'Đã dừng. Mở popup extension để tiếp tục.';
@@ -280,12 +301,29 @@ export function agentDom(action, args) {
       host.shadowRoot.querySelector('b').textContent = args.agent || 'AI agent';
       if (args.text != null) host.shadowRoot.querySelector('.msg').textContent = args.text;
       if (typeof args.x === 'number' && typeof args.y === 'number') {
-        const ring = d.createElement('div');
-        ring.className = 'ring';
-        ring.style.left = args.x + 'px';
-        ring.style.top = args.y + 'px';
-        host.shadowRoot.appendChild(ring);
-        setTimeout(() => ring.remove(), 800);
+        const cur = host.shadowRoot.querySelector('.cur');
+        const x = Math.max(0, Math.min(w.innerWidth, args.x)), y = Math.max(0, Math.min(w.innerHeight, args.y));
+        if (cur.style.display !== 'block') {
+          // First appearance: place it without animation, then glide on later moves.
+          cur.style.transition = 'none';
+          cur.style.left = x + 'px'; cur.style.top = y + 'px';
+          cur.style.display = 'block';
+          void cur.offsetWidth;
+          cur.style.transition = '';
+        } else {
+          cur.style.left = x + 'px'; cur.style.top = y + 'px';
+        }
+        if (args.ring !== false) {
+          setTimeout(() => {
+            cur.classList.remove('press'); void cur.offsetWidth; cur.classList.add('press');
+            const ring = d.createElement('div');
+            ring.className = 'ring';
+            ring.style.left = x + 'px';
+            ring.style.top = y + 'px';
+            host.shadowRoot.appendChild(ring);
+            setTimeout(() => ring.remove(), 800);
+          }, 180);
+        }
       }
       return { ok: true };
     }
@@ -370,16 +408,16 @@ export function agentDom(action, args) {
     }
 
     case 'markUpload': {
-      let el = elOf(args.ref);
-      if (!el) return notFound(args.ref);
-      if (!(el.tagName === 'INPUT' && el.type === 'file')) {
+      let el = args.ref ? elOf(args.ref) : null;
+      if (args.ref && !el) return notFound(args.ref);
+      if (el && !(el.tagName === 'INPUT' && el.type === 'file')) {
         const inner = el.querySelector('input[type=file]');
         if (inner) el = inner;
         else if (el.id) { const l = d.querySelector(`input[type=file][aria-labelledby~="${el.id}"]`); if (l) el = l; }
       }
-      if (!(el.tagName === 'INPUT' && el.type === 'file')) {
+      if (!(el && el.tagName === 'INPUT' && el.type === 'file')) {
         const any = d.querySelector('input[type=file]');
-        if (!any) return { error: `${args.ref} is not a file input and no <input type=file> exists on the page.` };
+        if (!any) return { error: `${args.ref ? args.ref + ' is not a file input and ' : ''}no <input type=file> exists on the page. Click the upload button first: the kit suppresses the file dialog and file_upload can then fill it.` };
         el = any;
       }
       el.setAttribute('data-ak-upload', '1');

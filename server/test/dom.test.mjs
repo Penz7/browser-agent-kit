@@ -118,16 +118,25 @@ assert(tr.fallback === true, 'typeText reports fallback when nothing editable is
 
 // scroll
 let scrolled = null;
-dom.window.scrollBy = (o) => { scrolled = o; };
+dom.window.scrollBy = (o) => { scrolled = scrolled ? { left: scrolled.left + o.left, top: scrolled.top + o.top } : { ...o }; };
 dom.window.document.elementFromPoint = () => null;
-const sc = agentDom('scroll', { dx: 0, dy: 300 });
-assert(scrolled && scrolled.top === 300 && sc.scroller === 'window', 'scroll falls back to window.scrollBy');
+const sc = await agentDom('scroll', { dx: 0, dy: 300 });
+assert(scrolled && scrolled.top === 300 && scrolled.left === 0 && sc.scroller === 'window', 'animated scroll adds up to the requested distance on window.scrollBy');
 
 // overlay
 global.chrome = { runtime: { sendMessage() {} } };
 agentDom('overlay', { state: 'show', text: 'Đọc trang', agent: 'Codex', x: 10, y: 10 });
 const host = document.getElementById('__ak_overlay_host');
 assert(host && host.shadowRoot.querySelector('.msg').textContent === 'Đọc trang', 'overlay shows status text in a shadow root');
+const cur = host.shadowRoot.querySelector('.cur');
+assert(cur && cur.style.display === 'block' && cur.style.left === '10px', 'overlay shows the virtual cursor at the action point');
+agentDom('overlay', { state: 'show', x: 50, y: 60, ring: false });
+assert(cur.style.left === '50px' && cur.style.top === '60px', 'cursor moves to the next point');
+agentDom('overlay', { state: 'suspend' });
+assert(host.style.display === 'none', 'suspend hides the overlay for screenshots');
+agentDom('overlay', { state: 'resume' });
+assert(host.style.display === '' && cur.style.left === '50px', 'resume restores the overlay with the cursor where it was');
+agentDom('overlay', { state: 'hide' });
 assert(!agentDom('snapshot', { mode: 'full' }).lines.join('\n').includes('ak_overlay'), 'overlay host is excluded from read_page');
 agentDom('overlay', { state: 'hide' });
 assert(!document.getElementById('__ak_overlay_host'), 'overlay hide removes the host');

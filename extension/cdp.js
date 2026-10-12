@@ -5,7 +5,7 @@ const MAX_ENTRIES = 1000;
 function st(tabId) {
   let s = state.get(tabId);
   if (!s) {
-    s = { attached: false, console: [], network: [], netIndex: new Map(), dialogPolicy: 'accept' };
+    s = { attached: false, console: [], network: [], netIndex: new Map(), dialogPolicy: 'accept', fileChooser: null };
     state.set(tabId, s);
   }
   return s;
@@ -31,8 +31,15 @@ export async function attach(tabId, dialogPolicy = 'accept') {
   for (const domain of ['Page', 'Runtime', 'Network', 'Log', 'DOM']) {
     try { await chrome.debugger.sendCommand({ tabId }, domain + '.enable'); } catch { /* optional */ }
   }
+  // A native "open file" dialog would block the tab and nothing could close it. Intercept it: Chrome then reports
+  // Page.fileChooserOpened with the input's node instead of showing the dialog, and file_upload fills that node.
+  try { await chrome.debugger.sendCommand({ tabId }, 'Page.setInterceptFileChooserDialog', { enabled: true }); } catch { /* old Chrome */ }
   return s;
 }
+
+// The file chooser the page opened most recently (after a click on an upload button), or null.
+export function fileChooser(tabId) { return st(tabId).fileChooser; }
+export function clearFileChooser(tabId) { st(tabId).fileChooser = null; }
 
 export async function send(tabId, method, params = {}) {
   try {
@@ -105,8 +112,15 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       chrome.debugger.sendCommand({ tabId }, 'Page.handleJavaScriptDialog', { accept, promptText: '' }).catch(() => {});
       break;
     }
+    case 'Page.fileChooserOpened':
+      s.fileChooser = { backendNodeId: params.backendNodeId, mode: params.mode || 'selectSingle', ts: now };
+      push(s.console, { ts: now, level: 'dialog', text: `[file chooser] opened (${s.fileChooser.mode}) -> suppressed; use file_upload` });
+      break;
     case 'Page.frameNavigated':
-      if (params.frame && !params.frame.parentId) push(s.console, { ts: now, level: 'navigation', text: `[navigated] ${params.frame.url}` });
+      if (params.frame && !params.frame.parentId) {
+        s.fileChooser = null;
+        push(s.console, { ts: now, level: 'navigation', text: `[navigated] ${params.frame.url}` });
+      }
       break;
     default:
       break;

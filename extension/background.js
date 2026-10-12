@@ -304,13 +304,26 @@ function tabInfo(t) {
 
 // ---------- overlay (glowing frame + status bar on the controlled tab) ----------
 const overlayTimers = new Map();
+const CURSOR_MOVE_MS = 200; // matches the cursor transition in dom.js
 async function showActivity(tabId, text, point) {
   const s = await cfg();
-  if (!s.overlay) return;
-  try { await inject(tabId, 'overlay', { state: 'show', text, agent: s.overlayName, ...(point || {}) }); } catch { /* page not injectable */ }
+  if (!s.overlay) return false;
+  let shown = true;
+  try { await inject(tabId, 'overlay', { state: 'show', text, agent: s.overlayName, ...(point || {}) }); } catch { shown = false; /* page not injectable */ }
   clearTimeout(overlayTimers.get(tabId));
   overlayTimers.set(tabId, setTimeout(() => hideActivity(tabId), 8000));
+  return shown;
 }
+// Glide the virtual cursor to the point and give it time to arrive before the real input event lands there.
+async function cursorTo(tabId, text, point, ring = true) {
+  if (await showActivity(tabId, text, { x: point.x, y: point.y, ring })) await sleep(CURSOR_MOVE_MS);
+}
+// Files the page asked for through a (suppressed) native file dialog in the last 90 seconds.
+function pendingFileChooser(tabId) {
+  const c = cdp.fileChooser(tabId);
+  return c && Date.now() - c.ts < 90000 ? c : null;
+}
+const CHOOSER_HINT = 'The page opened a file-picker dialog (the kit suppressed it). Call file_upload with this tabId and the local file paths; no ref is needed.';
 async function hideActivity(tabId) {
   clearTimeout(overlayTimers.get(tabId));
   overlayTimers.delete(tabId);
@@ -396,7 +409,7 @@ const handlers = {
     const mw = maxWidth || DEFAULT_MAX_WIDTH;
     // Keep the overlay out of the picture so the model sees the real page.
     const hadOverlay = overlayTimers.has(tab.id);
-    if (hadOverlay) { try { await inject(tab.id, 'overlay', { state: 'hide' }); } catch { /* ignore */ } }
+    if (hadOverlay) { try { await inject(tab.id, 'overlay', { state: 'suspend' }); } catch { /* ignore */ } }
     let dataUrl;
     try {
       if (fast) {
@@ -414,7 +427,7 @@ const handlers = {
         dataUrl = 'data:image/png;base64,' + shot.data;
       }
     } finally {
-      if (hadOverlay) { const s = await cfg(); try { await inject(tab.id, 'overlay', { state: 'show', agent: s.overlayName }); } catch { /* ignore */ } }
+      if (hadOverlay) { try { await inject(tab.id, 'overlay', { state: 'resume' }); } catch { /* ignore */ } }
     }
     const bmp = await createImageBitmap(await (await fetch(dataUrl)).blob());
     const dpr = bmp.width / vp.width;
@@ -447,13 +460,10 @@ const handlers = {
     const clickCount = p.clickCount || 1;
     if (await fastMode()) {
       const tab = await prepareLite(p.tabId);
-      let args = { ref: p.ref, button, clickCount, modifiers: p.modifiers };
-      if (!p.ref) {
-        const pt = await resolvePoint(tab.id, p);
-        args = { ...args, x: pt.x, y: pt.y };
-      }
+      const pre = await resolvePoint(tab.id, p); // scrolls the target into view and tells the cursor where to go
+      await cursorTo(tab.id, `Click: ${pre.name || ''}`, pre);
+      const args = { ref: p.ref, button, clickCount, modifiers: p.modifiers, ...(p.ref ? {} : { x: pre.x, y: pre.y }) };
       const r = await inject(tab.id, 'click', args);
-      showActivity(tab.id, `Click: ${r.name || ''}`, { x: r.x, y: r.y });
       await settle(tab.id);
       const t = await chrome.tabs.get(tab.id);
       return { x: r.x, y: r.y, covered: !!r.covered, target: r.name, hint: r.hint, url: t.url, title: t.title };
@@ -461,7 +471,8 @@ const handlers = {
     const tab = await prepare(p.tabId);
     const pt = await resolvePoint(tab.id, p);
     const modifiers = p.modifiers ? parseModifiers(p.modifiers) : 0;
-    showActivity(tab.id, `Click: ${pt.name || ''}`, { x: pt.x, y: pt.y });
+    const started = Date.now();
+    await cursorTo(tab.id, `Click: ${pt.name || ''}`, pt);
     await mouse(tab.id, 'mouseMoved', pt.x, pt.y, { modifiers });
     for (let i = 1; i <= clickCount; i++) {
       await mouse(tab.id, 'mousePressed', pt.x, pt.y, { button, clickCount: i, modifiers });
@@ -469,12 +480,15 @@ const handlers = {
     }
     await settle(tab.id);
     const t = await chrome.tabs.get(tab.id);
-    return { x: pt.x, y: pt.y, covered: !!pt.covered, target: pt.name, url: t.url, title: t.title };
+    const chooser = cdp.fileChooser(tab.id);
+    const hint = chooser && chooser.ts >= started ? CHOOSER_HINT : undefined;
+    return { x: pt.x, y: pt.y, covered: !!pt.covered, target: pt.name, hint, url: t.url, title: t.title };
   },
 
   async mouse_move(p) {
     const tab = await prepare(p.tabId);
     const pt = await resolvePoint(tab.id, p);
+    await cursorTo(tab.id, 'Di chuột', pt, false);
     await mouse(tab.id, 'mouseMoved', pt.x, pt.y);
     await sleep(100);
     return { x: pt.x, y: pt.y };
@@ -484,9 +498,10 @@ const handlers = {
     const tab = await prepare(p.tabId);
     const a = await resolvePoint(tab.id, { ...p.from, maxWidth: p.maxWidth });
     const b = await resolvePoint(tab.id, { ...p.to, maxWidth: p.maxWidth });
-    showActivity(tab.id, 'Kéo thả', { x: a.x, y: a.y });
+    await cursorTo(tab.id, 'Kéo thả', a);
     await mouse(tab.id, 'mouseMoved', a.x, a.y);
     await mouse(tab.id, 'mousePressed', a.x, a.y, { button: 'left', clickCount: 1 });
+    showActivity(tab.id, 'Kéo thả', { x: b.x, y: b.y, ring: false }); // the cursor glides to the drop point alongside the real moves
     const steps = 12;
     for (let i = 1; i <= steps; i++) {
       await mouse(tab.id, 'mouseMoved', a.x + (b.x - a.x) * i / steps, a.y + (b.y - a.y) * i / steps, { button: 'left', buttons: 1 });
@@ -527,23 +542,30 @@ const handlers = {
   async scroll(p) {
     const amt = (p.amount == null ? 3 : p.amount) * 100;
     const [dx, dy] = { up: [0, -amt], down: [0, amt], left: [-amt, 0], right: [amt, 0] }[p.direction || 'down'];
+    const label = `Cuộn ${p.direction || 'down'}`;
     if (await fastMode()) {
       const tab = await prepareLite(p.tabId);
-      let pt = {};
-      if (!p.ref && typeof p.x === 'number') pt = await resolvePoint(tab.id, p);
-      const r = await inject(tab.id, 'scroll', { ref: p.ref, ...pt, dx, dy });
-      showActivity(tab.id, `Cuộn ${p.direction || 'down'}`);
-      await sleep(250);
+      let pt;
+      if (p.ref || typeof p.x === 'number') pt = await resolvePoint(tab.id, p);
+      else { const vp = await viewport(tab.id); pt = { x: vp.width / 2, y: vp.height / 2 }; }
+      showActivity(tab.id, label, { x: pt.x, y: pt.y, ring: false });
+      const r = await inject(tab.id, 'scroll', { x: pt.x, y: pt.y, dx, dy }); // animated inside the page
+      await sleep(120);
       return r;
     }
     const tab = await prepare(p.tabId);
     let pt;
     if (p.ref || typeof p.x === 'number') pt = await resolvePoint(tab.id, p);
     else { const vp = await viewport(tab.id); pt = { x: vp.width / 2, y: vp.height / 2 }; }
-    showActivity(tab.id, `Cuộn ${p.direction || 'down'}`);
+    await cursorTo(tab.id, label, pt, false);
     await mouse(tab.id, 'mouseMoved', pt.x, pt.y);
-    await mouse(tab.id, 'mouseWheel', pt.x, pt.y, { deltaX: dx, deltaY: dy });
-    await sleep(350);
+    // Several small wheel ticks read as a smooth scroll instead of one jump; pages with wheel handlers also prefer this.
+    const steps = Math.min(12, Math.max(1, Math.ceil(Math.max(Math.abs(dx), Math.abs(dy)) / 60)));
+    for (let i = 0; i < steps; i++) {
+      await mouse(tab.id, 'mouseWheel', pt.x, pt.y, { deltaX: dx / steps, deltaY: dy / steps });
+      await sleep(20);
+    }
+    await sleep(250);
     return inject(tab.id, 'scrollInfo', {});
   },
 
@@ -612,6 +634,14 @@ const handlers = {
   async file_upload({ tabId, ref, paths }) {
     const tab = await prepare(tabId);
     showActivity(tab.id, 'Tải file lên');
+    // A suppressed native dialog names the exact input the page wanted; prefer it over guessing from a ref.
+    const chooser = pendingFileChooser(tab.id);
+    if (chooser) {
+      cdp.clearFileChooser(tab.id);
+      await cdp.send(tab.id, 'DOM.setFileInputFiles', { files: paths, backendNodeId: chooser.backendNodeId });
+      await settle(tab.id);
+      return { uploaded: paths, via: 'file dialog' };
+    }
     await inject(tab.id, 'markUpload', { ref });
     try {
       const { root } = await cdp.send(tab.id, 'DOM.getDocument', { depth: 0 });
@@ -622,7 +652,7 @@ const handlers = {
       await inject(tab.id, 'unmarkUpload', {}).catch(() => {});
     }
     await settle(tab.id);
-    return { uploaded: paths };
+    return { uploaded: paths, via: 'input' };
   },
 
   async 'window.resize'({ tabId, width, height }) {
