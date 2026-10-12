@@ -5,13 +5,13 @@ export const DEFAULTS = {
   allowAll: false,
   allowedSites: [],
   dialogPolicy: 'accept', // accept | dismiss
-  inputMode: 'fast',      // fast = DOM events via content script, debugger only when needed | real = CDP for everything
+  inputMode: 'real',      // real = Chrome debugger (CDP) for every input, like Claude in Chrome | fast = DOM events, debugger only when needed
   overlay: true,          // glowing frame + status bar on the tab being controlled
   overlayName: 'AI agent',
   groupTabs: true,        // put tabs the agent creates into a tab group
   groupName: 'Agent',
   groupColor: 'purple',   // grey blue red yellow green pink purple cyan orange
-  idleDetachSec: 20       // detach the debugger after this many idle seconds (0 = keep attached)
+  idleDetachSec: 60       // detach the debugger after this many idle seconds (0 = keep attached)
 };
 
 export async function getSettings() {

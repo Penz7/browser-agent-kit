@@ -38,10 +38,10 @@
 
   <label for="inputMode">Input mode</label>
   <select id="inputMode">
-    <option value="fast">Fast (default): DOM events, no debugger for click/type/scroll/screenshot</option>
-    <option value="real">Real: every input goes through the Chrome debugger (CDP)</option>
+    <option value="real">Real (default): every input goes through the Chrome debugger (CDP), like Claude in Chrome</option>
+    <option value="fast">Fast: DOM events, no debugger for click/type/scroll/screenshot</option>
   </select>
-  <div class="hint">Fast mode avoids the "is debugging this browser" bar for most actions. Switch to Real if a site ignores synthetic clicks.</div>
+  <div class="hint">Real mode sends trusted mouse/keyboard events and captures console/network while attached. Fast mode avoids the "is debugging this browser" bar but uses synthetic events some sites ignore.</div>
 
   <label for="idleDetach">Release debugger after idle (seconds)</label>
   <input type="number" id="idleDetach" min="0" max="3600">

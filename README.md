@@ -113,12 +113,14 @@ browser-agent-kit doctor     kiểm tra extension có nối được không
 
 ## Chế độ nhanh, tab group và overlay
 
-Mặc định kit chạy ở **chế độ nhanh** (Settings → Input mode → Fast):
+Mặc định kit chạy ở **chế độ Real** giống Claude in Chrome: mọi chuột, phím đi qua Chrome debugger (CDP) nên là sự kiện thật, và console/network được bắt trong lúc debugger gắn. Thanh "Browser Agent Kit is debugging this browser" hiện trong lúc làm việc và tự biến mất sau 60 giây rảnh (Settings → Release debugger after idle; đặt 0 để giữ luôn).
 
-- Click, gõ chữ, cuộn, chụp màn hình đi qua content script và `chrome.tabs.captureVisibleTab`, **không gắn debugger**, nên không hiện thanh "is debugging this browser" và nhanh hơn rõ rệt.
-- Chỉ các việc cần sự kiện thật mới gắn debugger: phím tắt (`key`), kéo thả, `javascript_tool`, console, network, upload file. Debugger tự gỡ sau 20 giây rảnh (Settings → Release debugger after idle; đặt 0 để giữ, cần khi muốn bắt console/network liên tục).
+Muốn nhẹ hơn, chọn Settings → Input mode → **Fast**:
+
+- Click, gõ chữ, cuộn, chụp màn hình đi qua content script và `chrome.tabs.captureVisibleTab`, **không gắn debugger**, nên không hiện thanh debug và nhanh hơn rõ rệt.
+- Chỉ các việc cần sự kiện thật mới gắn debugger: phím tắt (`key`), kéo thả, `javascript_tool`, console, network, upload file.
 - Gõ chữ dùng `execCommand('insertText')` trên ô đang focus nên React, Vue, các editor như Draft.js, ProseMirror đều nhận. Nếu không có ô nào đang focus, kit tự chuyển sang gõ phím thật qua debugger.
-- Click giả lập không mở được menu `<select>` gốc của trình duyệt, kit sẽ nhắc agent dùng `form_input`. Site nào kiểm tra `isTrusted` thì đổi sang **Real** trong Settings, mọi thao tác sẽ đi qua CDP như trước.
+- Click giả lập không mở được menu `<select>` gốc của trình duyệt, kit sẽ nhắc agent dùng `form_input`. Site nào kiểm tra `isTrusted` thì quay về **Real**.
 
 **Tab group**: tab do agent mở (`tabs_create`) được gom vào group tên "Agent", màu tím, mỗi cửa sổ một group. Đổi tên và màu trong Settings, hoặc tắt.
 
@@ -149,7 +151,7 @@ Mặc định kit chạy ở **chế độ nhanh** (Settings → Input mode → 
 ## Sự cố thường gặp
 
 - **Icon đỏ**: chưa có agent nào khởi động server, hoặc port lệch. Mở Settings của extension kiểm tra port, bấm Reconnect.
-- **Thanh "Browser Agent Kit is debugging this browser"**: chỉ hiện khi dùng phím tắt, JS, console, network, kéo thả, và tự biến mất sau 20 giây rảnh. Đừng bấm Cancel, nếu bấm thì lần gọi sau sẽ tự attach lại. Muốn không bao giờ thấy: chạy Chrome với cờ `--silent-debugger-extension-api`.
+- **Thanh "Browser Agent Kit is debugging this browser"**: bình thường ở chế độ Real, tự biến mất sau 60 giây rảnh. Ở chế độ Fast chỉ hiện khi dùng phím tắt, JS, console, network, kéo thả. Đừng bấm Cancel, nếu bấm thì lần gọi sau sẽ tự attach lại. Muốn không bao giờ thấy: chạy Chrome với cờ `--silent-debugger-extension-api`.
 - **"Cannot attach debugger"**: tab đang mở DevTools. Đóng DevTools của tab đó.
 - **"Cannot run on this page"**: trang `chrome://`, Chrome Web Store, hoặc PDF viewer. Chrome không cho extension can thiệp.
 - **iframe cross-origin**: `read_page`/`find` chỉ thấy frame chính. Dùng screenshot và click theo tọa độ cho nội dung trong iframe.
