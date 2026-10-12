@@ -21,13 +21,36 @@ let busy = 0;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ---------- connection ----------
-function wsOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); }
+// Chrome records every failed WebSocket attempt on the extension's "Errors" page, so the worker only retries
+// eagerly during a short "hot" window: after Chrome starts, after a live connection drops, or after someone asks
+// (popup, settings change, wake tab). Outside that window it probes the port once per IDLE_INTERVAL_MS and otherwise
+// waits to be woken: the server opens http://127.0.0.1:<port>/wake in a tab when an agent needs the browser.
+const HOT_WINDOW_MS = 2 * 60 * 1000;
+const IDLE_INTERVAL_MS = 5 * 60 * 1000;
+const MAX_BACKOFF_MS = 30000;
+const wakeTabs = new Set();
 
-async function connect() {
+// Kept in session storage so it survives service-worker restarts and resets when Chrome restarts.
+let connState = null;
+const connStateReady = chrome.storage.session.get('connState')
+  .then(({ connState: st }) => (connState = st || { hotUntil: Date.now() + HOT_WINDOW_MS, lastAttempt: 0 }));
+const state = async () => connState || connStateReady;
+function setConnState(patch) { Object.assign(connState, patch); chrome.storage.session.set({ connState }); }
+function markHot() { setConnState({ hotUntil: Date.now() + HOT_WINDOW_MS }); }
+
+function wsOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); }
+function wsBusy() { return !!(ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)); }
+
+async function connect(force = false) {
+  if (wsBusy()) return;
   const s = await cfg();
-  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
-  // Each failed attempt is logged by Chrome as an extension error, so back off up to 30s while no server is running.
-  lastAttempt = Date.now();
+  const st = await state();
+  if (wsBusy()) return;
+  const now = Date.now();
+  if (force) markHot();
+  else if (now >= st.hotUntil && now - st.lastAttempt < IDLE_INTERVAL_MS) return; // idle: wait for the next probe or a wake
+  lastAttempt = now;
+  setConnState({ lastAttempt: now });
   let sock;
   try { sock = new WebSocket(`ws://127.0.0.1:${s.port}/extension`); } catch { scheduleReconnect(); return; }
   ws = sock;
@@ -35,17 +58,42 @@ async function connect() {
     backoff = 1000;
     connectedAt = Date.now();
     sock.send(JSON.stringify({ type: 'hello', token: s.token, version: VERSION }));
+    closeWakeTabs();
   };
   sock.onmessage = (ev) => handleMessage(ev.data);
-  sock.onclose = () => { if (ws === sock) { ws = null; connectedAt = null; } scheduleReconnect(); };
+  sock.onclose = () => {
+    if (ws === sock) {
+      ws = null;
+      if (connectedAt != null) { backoff = 1000; markHot(); } // a live connection dropped: the agent may restart soon
+      connectedAt = null;
+    }
+    scheduleReconnect();
+  };
   sock.onerror = () => {};
 }
 
 function scheduleReconnect() {
-  if (reconnectTimer) return;
+  if (reconnectTimer || !connState || Date.now() >= connState.hotUntil) return;
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
-  backoff = Math.min(backoff * 2, 30000);
+  backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
 }
+
+// The server opens this URL in a tab when an agent needs the browser while the extension is idle.
+async function isWakeUrl(url) {
+  const s = await cfg();
+  try { const u = new URL(url); return u.origin === `http://127.0.0.1:${s.port}` && u.pathname === '/wake'; } catch { return false; }
+}
+function closeWakeTabs() {
+  for (const id of wakeTabs) chrome.tabs.remove(id).catch(() => {});
+  wakeTabs.clear();
+}
+chrome.tabs.onUpdated.addListener(async (tabId, info, tab) => {
+  const url = info.url || (info.status === 'complete' ? tab.url : '');
+  if (!url || !(await isWakeUrl(url))) return;
+  wakeTabs.add(tabId);
+  if (wsOpen()) closeWakeTabs(); else { backoff = 1000; connect(true); }
+});
+chrome.tabs.onRemoved.addListener((tabId) => wakeTabs.delete(tabId));
 
 function reply(obj) { if (wsOpen()) ws.send(JSON.stringify(obj)); }
 
@@ -72,24 +120,26 @@ async function handleMessage(raw) {
   }
 }
 
-chrome.alarms.create('ak-keepalive', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive' && Date.now() - lastAttempt > 25000) connect(); });
-chrome.runtime.onStartup.addListener(() => connect());
+chrome.alarms.create('ak-keepalive', { periodInMinutes: 1 });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive' && !reconnectTimer) connect(); });
+chrome.runtime.onStartup.addListener(() => connect(true));
 chrome.runtime.onInstalled.addListener((d) => {
-  connect();
+  connect(true);
   if (d.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
 });
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
   settings = await getSettings();
-  if (changes.port || changes.token) { backoff = 1000; if (ws) ws.close(); else connect(); }
+  if (changes.port || changes.token) { backoff = 1000; if (ws) ws.close(); else connect(true); }
 });
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (!msg) return;
   if (msg.type === 'status') {
+    // Opening the popup is a good moment to retry: the user is looking at the connection state.
+    if (!wsOpen() && Date.now() - lastAttempt > 3000) connect(true);
     respond({ connected: wsOpen(), port: settings ? settings.port : null, since: connectedAt, version: VERSION, paused });
   } else if (msg.type === 'reconnect') {
-    backoff = 1000; if (ws) ws.close(); else connect(); respond({ ok: true });
+    backoff = 1000; if (ws) ws.close(); else connect(true); respond({ ok: true });
   } else if (msg.type === 'agent-stop') {
     paused = true; respond({ ok: true });
   } else if (msg.type === 'resume') {

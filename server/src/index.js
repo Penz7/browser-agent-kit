@@ -17,6 +17,9 @@ const cfg = {
   quality: Number(process.env.BROWSER_KIT_IMAGE_QUALITY || 85),
   debug: process.env.BROWSER_KIT_DEBUG === '1',
   extensionId: process.env.BROWSER_KIT_EXTENSION_ID || '',
+  // When the extension is idle, open http://127.0.0.1:<port>/wake in Chrome so it reconnects at once (the tab closes itself).
+  wake: process.env.BROWSER_KIT_WAKE !== '0',
+  browser: process.env.BROWSER_KIT_BROWSER || '',
   // Local files the agent may hand to a web page. Dot-directories (~/.ssh, ~/.aws, ~/.gemini...) are always refused.
   uploadRoots: (process.env.BROWSER_KIT_UPLOAD_ROOTS || [os.homedir(), os.tmpdir(), '/tmp'].join(path.delimiter))
     .split(path.delimiter).filter(Boolean).map((p) => path.resolve(p))
@@ -47,7 +50,7 @@ Workflow:
 8. Do not click buttons that are likely to open alert/confirm dialogs unless necessary; the kit auto-closes dialogs and logs them to read_console_messages.
 9. If a tool says the site is not allowed, stop and ask the user to allow it in the extension popup.`;
 
-const bridge = new Bridge({ port: cfg.port, token: cfg.token, extensionId: cfg.extensionId, log });
+const bridge = new Bridge({ port: cfg.port, token: cfg.token, extensionId: cfg.extensionId, wake: cfg.wake, browser: cfg.browser, log });
 await bridge.start();
 
 const server = new McpServer({ name: 'browser-agent-kit', version: '0.1.0' }, { instructions: INSTRUCTIONS });

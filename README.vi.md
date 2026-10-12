@@ -181,6 +181,8 @@ Biến môi trường của server (đặt trong config MCP):
 | `BROWSER_KIT_IMAGE_FORMAT` / `_QUALITY` | jpeg / 85 | `png` nếu cần nét hơn |
 | `BROWSER_KIT_EXTENSION_ID` | rỗng | ghim ID extension được phép nối hub |
 | `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | thư mục được phép cho `file_upload` |
+| `BROWSER_KIT_WAKE` | 1 | `0` để server không mở `http://127.0.0.1:<port>/wake` trong Chrome đánh thức extension đang nghỉ (khi đó tự bấm Reconnect trong popup) |
+| `BROWSER_KIT_BROWSER` | rỗng | trình duyệt dùng để mở tab đánh thức: tên app trên macOS (`Google Chrome Beta`) hoặc lệnh/đường dẫn trên hệ khác. Mặc định: Google Chrome, rồi trình duyệt mặc định của máy |
 | `BROWSER_KIT_DEBUG` | 0 | `1` để log ra stderr |
 
 CLI: `browser-agent-kit` (chạy server) · `setup [agent…]` · `extension` (in đường dẫn) · `doctor` (kiểm tra kết nối).
@@ -206,7 +208,9 @@ Phần còn lại là của bạn: agent được chạy JS và đọc trang tr�
 
 | Triệu chứng | Nguyên nhân / cách xử lý |
 |---|---|
-| Icon đỏ, "Not connected" | Chưa có agent nào khởi động server, hoặc port lệch. Mở Settings kiểm tra port, bấm Reconnect. `browser-agent-kit doctor` để thử. |
+| Icon đỏ, "Not connected" | Chưa có agent nào khởi động server, hoặc port lệch. Mở Settings kiểm tra port, bấm Reconnect. `browser-agent-kit doctor` để thử. Mở popup cũng tự kích hoạt kết nối lại. |
+| Nút "Errors" trên thẻ extension, các dòng `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Vô hại và hiếm: mỗi dòng là một lần thăm dò lúc không có agent chạy server. Extension chỉ thử dồn dập trong 2 phút sau khi mở Chrome hoặc sau khi agent tắt, sau đó 5 phút mới thử một lần; agent khởi động sẽ đánh thức nó ngay qua tab wake. Bấm Clear all. Lỗi khác thì đáng báo cáo. |
+| Một tab `http://127.0.0.1:7851/wake` lóe lên rồi tự đóng | Đó là server đánh thức extension đang nghỉ; extension đóng tab ngay khi kết nối xong. Nếu tab không đóng thì extension không chạy trong profile Chrome đó (xem chữ trên trang). `BROWSER_KIT_WAKE=0` để tắt. |
 | Agent nói "Site not allowed" | Bấm icon extension trên site đó → Allow this site. |
 | Thanh "Browser Agent Kit is debugging this browser" | Bình thường ở chế độ Real. Đừng bấm Cancel. Muốn không bao giờ thấy: chọn Fast, hoặc chạy Chrome với `--silent-debugger-extension-api`. |
 | "Cannot attach debugger" | Tab đang mở DevTools. Đóng DevTools của tab đó. |

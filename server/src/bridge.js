@@ -3,20 +3,48 @@
 // Later processes (other agents running at the same time) become "leaves" and relay through the hub.
 import { WebSocketServer, WebSocket } from 'ws';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { spawn } from 'node:child_process';
 
 export const NOT_CONNECTED =
   'Chrome extension is not connected. Make sure Chrome is open, the "Browser Agent Kit" extension is installed and enabled, ' +
-  'and its port setting matches the server (default 7851). Click the extension icon to see its connection status.';
+  'and its port setting matches the server (default 7851). Click the extension icon to see its connection status and press Reconnect.';
+
+// While no agent is running, the extension probes the port only every few minutes (each failed probe is logged by Chrome).
+// When a tool call arrives before it reconnected, the hub opens this page in Chrome: the extension sees the URL, connects
+// at once and closes the tab. The page is only ever seen when the extension is missing or disabled.
+export const WAKE_PATH = '/wake';
+const WAKE_WAIT_MS = 12000;
+const WAKE_THROTTLE_MS = 20000;
+const WAKE_HTML = `<!doctype html><meta charset="utf-8"><title>Browser Agent Kit</title>
+<body style="font:15px/1.5 system-ui,sans-serif;max-width:40em;margin:4em auto;padding:0 1em;color:#222">
+<h2>Browser Agent Kit</h2>
+<p>An AI agent needs the browser and is waking the extension. This tab closes by itself once the extension connects.</p>
+<p>Still reading this? Then the extension is not running in this Chrome profile: install it from <code>chrome://extensions</code>
+(Load unpacked, pick the kit's <code>extension</code> folder), make sure it is enabled and its port matches this server, then press Reconnect in its popup.</p>
+</body>`;
+
+function wakeCommands(url, browser) {
+  if (browser) return process.platform === 'darwin' && !browser.includes('/') ? [['open', ['-a', browser, url]]] : [[browser, [url]]];
+  if (process.platform === 'darwin') return [['open', ['-a', 'Google Chrome', url]], ['open', [url]]];
+  if (process.platform === 'win32') return [['cmd', ['/c', 'start', '', url]]];
+  return [['google-chrome', [url]], ['google-chrome-stable', [url]], ['chromium', [url]], ['chromium-browser', [url]], ['xdg-open', [url]]];
+}
 
 export class Bridge {
-  constructor({ port, token = '', extensionId = '', log = () => {} }) {
+  constructor({ port, token = '', extensionId = '', wake = true, browser = '', log = () => {} }) {
     this.port = port;
     this.token = token;
     this.extensionId = extensionId;
+    this.wake = wake;
+    this.browser = browser;
     this.log = log;
     this.mode = null;
+    this.http = null;
     this.wss = null;
     this.ext = null;
+    this.extWaiters = [];
+    this.lastWake = 0;
     this.extPending = new Map();
     this.leafSocket = null;
     this.leafPending = new Map();
@@ -52,19 +80,56 @@ export class Bridge {
     this.closed = true;
     for (const p of this.extPending.values()) { clearTimeout(p.timer); p.reject(new Error('closing')); }
     for (const p of this.leafPending.values()) { clearTimeout(p.timer); p.reject(new Error('closing')); }
+    for (const w of this.extWaiters.splice(0)) w();
     if (this.ext) this.ext.close();
     if (this.leafSocket) this.leafSocket.close();
     if (this.wss) this.wss.close();
+    if (this.http) this.http.close();
   }
 
   // ---- hub side ----
   #listen() {
     return new Promise((resolve, reject) => {
-      const wss = new WebSocketServer({ host: '127.0.0.1', port: this.port });
-      wss.once('listening', () => { this.wss = wss; resolve(); });
-      wss.once('error', reject);
+      const http = createServer((req, res) => {
+        if ((req.url || '/').split('?')[0] === WAKE_PATH) { res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' }); res.end(WAKE_HTML); }
+        else { res.writeHead(404); res.end(); }
+      });
+      const wss = new WebSocketServer({ server: http });
       wss.on('connection', (sock, req) => this.#onConnection(sock, req));
+      wss.on('error', reject); // ws re-emits the http server's errors (EADDRINUSE) here; unhandled it would crash the process
+      http.once('error', reject);
+      http.listen(this.port, '127.0.0.1', () => { this.http = http; this.wss = wss; resolve(); });
     });
+  }
+
+  // Resolves as soon as the extension says hello, or after `ms`. Opens the wake tab if allowed.
+  #waitForExtension(ms) {
+    if (!this.wake) return Promise.resolve();
+    this.#openWakeTab();
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => { this.extWaiters = this.extWaiters.filter((w) => w !== done); resolve(); }, ms);
+      const done = () => { clearTimeout(timer); resolve(); };
+      this.extWaiters.push(done);
+    });
+  }
+
+  #openWakeTab() {
+    if (Date.now() - this.lastWake < WAKE_THROTTLE_MS) return;
+    this.lastWake = Date.now();
+    const url = `http://127.0.0.1:${this.port}${WAKE_PATH}`;
+    const candidates = wakeCommands(url, this.browser);
+    const tryNext = (i) => {
+      if (i >= candidates.length) { this.log('could not open the wake tab: no browser command worked'); return; }
+      const [cmd, args] = candidates[i];
+      let child;
+      try { child = spawn(cmd, args, { stdio: 'ignore', detached: true, windowsHide: true }); } catch { tryNext(i + 1); return; }
+      let failed = false;
+      child.on('error', () => { if (!failed) { failed = true; tryNext(i + 1); } });
+      child.on('exit', (code) => { if (code !== 0 && !failed) { failed = true; tryNext(i + 1); } });
+      child.unref();
+    };
+    this.log(`extension not connected, opening ${url} to wake it`);
+    tryNext(0);
   }
 
   // Browsers always send an Origin header on WebSocket upgrades; Node clients do not.
@@ -97,6 +162,7 @@ export class Bridge {
         if (this.ext && this.ext !== sock) this.ext.close(4000, 'replaced by a newer connection');
         this.ext = sock;
         this.log(`extension connected (v${msg.version || '?'})`);
+        for (const w of this.extWaiters.splice(0)) w();
         return;
       }
       if (!ready || msg.type === 'pong') return;
@@ -142,7 +208,8 @@ export class Bridge {
     sock.on('error', () => {});
   }
 
-  #requestExt(method, params, timeout = 60000) {
+  async #requestExt(method, params, timeout = 60000) {
+    if (!this.connected) await this.#waitForExtension(WAKE_WAIT_MS);
     return new Promise((resolve, reject) => {
       if (!this.ext || this.ext.readyState !== WebSocket.OPEN) return reject(new Error(NOT_CONNECTED));
       const id = randomUUID();
@@ -188,7 +255,7 @@ export class Bridge {
       const timer = setTimeout(() => {
         this.leafPending.delete(id);
         reject(new Error(`Timed out after ${timeout / 1000}s waiting for the browser (${method}).`));
-      }, timeout + 1000);
+      }, timeout + WAKE_WAIT_MS + 1000);
       this.leafPending.set(id, { resolve, reject, timer });
       this.leafSocket.send(JSON.stringify({ id, method, params, timeout }));
     });

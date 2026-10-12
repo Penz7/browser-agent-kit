@@ -180,6 +180,8 @@ Server environment variables (set in the MCP config):
 | `BROWSER_KIT_IMAGE_FORMAT` / `_QUALITY` | jpeg / 85 | `png` for sharper text |
 | `BROWSER_KIT_EXTENSION_ID` | empty | pin the extension id allowed to connect |
 | `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | folders allowed for `file_upload` |
+| `BROWSER_KIT_WAKE` | 1 | `0` stops the server from opening `http://127.0.0.1:<port>/wake` in Chrome to wake an idle extension (then press Reconnect in the popup yourself) |
+| `BROWSER_KIT_BROWSER` | empty | browser used for the wake tab: an app name on macOS (`Google Chrome Beta`) or a command/path elsewhere. Default: Google Chrome, then the system default browser |
 | `BROWSER_KIT_DEBUG` | 0 | `1` logs to stderr |
 
 CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `remove [agent…]` (undo setup, keeps other servers) · `extension` (print the path) · `doctor` (check the connection).
@@ -205,8 +207,9 @@ The rest is on you: the agent can run JavaScript and read pages on allowed sites
 
 | Symptom | Cause / fix |
 |---|---|
-| Red icon, "Not connected" | No agent has started the server yet, or the port differs. Check Settings, press Reconnect, or run `browser-agent-kit doctor`. |
-| "Errors" button on the extension card, lines like `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Harmless: the extension retries while no agent is running the server. Click Clear all, or start an agent. Any other error text is worth reporting. |
+| Red icon, "Not connected" | No agent has started the server yet, or the port differs. Check Settings, press Reconnect, or run `browser-agent-kit doctor`. Opening the popup also triggers a reconnect. |
+| "Errors" button on the extension card, lines like `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Harmless and rare: each line is one probe made while no agent was running the server. The extension retries eagerly only for 2 minutes after Chrome starts or an agent quits, then once every 5 minutes; a starting agent wakes it instantly via the wake tab. Click Clear all. Any other error text is worth reporting. |
+| A tab at `http://127.0.0.1:7851/wake` flashed open | That is the server waking an idle extension; the extension closes the tab as soon as it connects. If the tab stays open, the extension is not running in that Chrome profile (see the page text). `BROWSER_KIT_WAKE=0` disables it. |
 | Agent reports "Site not allowed" | Click the extension icon on that site → Allow this site. |
 | "Browser Agent Kit is debugging this browser" bar | Normal in Real mode. Do not press Cancel. To never see it: switch to Fast, or launch Chrome with `--silent-debugger-extension-api`. |
 | "Cannot attach debugger" | DevTools is open on that tab. Close it. |

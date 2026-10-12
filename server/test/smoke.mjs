@@ -11,11 +11,11 @@ const PORT = 7900 + Math.floor(Math.random() * 100);
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 const calls = [];
 
-function fakeExtension() {
+function fakeExtension(port = PORT) {
   return new Promise((resolve, reject) => {
     let attempts = 0;
     const tryConnect = () => {
-      const ws = new WebSocket(`ws://127.0.0.1:${PORT}/extension`, { headers: { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' } });
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/extension`, { headers: { Origin: 'chrome-extension://abcdefghijklmnopabcdefghijklmnop' } });
       ws.on('open', () => { ws.send(JSON.stringify({ type: 'hello', token: 'secret', version: 'test' })); resolve(ws); });
       ws.on('error', () => { if (++attempts > 50) reject(new Error('could not reach server')); else setTimeout(tryConnect, 100); });
       ws.on('message', (buf) => {
@@ -47,7 +47,7 @@ function fakeExtension() {
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 
-const env = { ...process.env, BROWSER_KIT_PORT: String(PORT), BROWSER_KIT_TOKEN: 'secret' };
+const env = { ...process.env, BROWSER_KIT_PORT: String(PORT), BROWSER_KIT_TOKEN: 'secret', BROWSER_KIT_WAKE: '0' };
 const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(here, '..', 'src', 'index.js')], env });
 const client = new Client({ name: 'smoke', version: '0.0.0' });
 await client.connect(transport);
@@ -118,6 +118,27 @@ r = await c2.callTool({ name: 'tabs_context', arguments: {} });
 assert(!r.isError && /tabId=7/.test(r.content[0].text), 'second agent process relays through the hub');
 
 await c2.close();
+
+// The hub serves a plain page at /wake; the server opens it in Chrome to wake an idle extension.
+const wakeRes = await fetch(`http://127.0.0.1:${PORT}/wake`);
+assert(wakeRes.status === 200 && /Browser Agent Kit/.test(await wakeRes.text()), 'hub serves the /wake page over plain http');
+assert((await fetch(`http://127.0.0.1:${PORT}/other`)).status === 404, 'other http paths are 404');
+
+// With wake enabled, a tool call waits for the extension instead of failing at once.
+if (process.platform !== 'win32') {
+  const PORT3 = PORT + 100;
+  const t3 = new StdioClientTransport({ command: process.execPath, args: [path.join(here, '..', 'src', 'index.js')],
+    env: { ...env, BROWSER_KIT_PORT: String(PORT3), BROWSER_KIT_WAKE: '1', BROWSER_KIT_BROWSER: '/usr/bin/true' } });
+  const c3 = new Client({ name: 'smoke3', version: '0.0.0' });
+  await c3.connect(t3);
+  const started = Date.now();
+  const late = setTimeout(() => fakeExtension(PORT3).then((w) => { late.ws = w; }), 1500);
+  r = await c3.callTool({ name: 'tabs_context', arguments: {} });
+  assert(!r.isError && /tabId=7/.test(r.content[0].text) && Date.now() - started >= 1400, 'tool call waits for a late extension when wake is on');
+  if (late.ws) late.ws.close();
+  await c3.close();
+}
+
 ext.close();
 await client.close();
 console.log('\nAll smoke tests passed.');
