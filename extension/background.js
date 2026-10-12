@@ -14,6 +14,7 @@ const cfg = async () => settings || settingsReady;
 let ws = null;
 let reconnectTimer = null;
 let backoff = 1000;
+let lastAttempt = 0;
 let connectedAt = null;
 let paused = false;
 let busy = 0;
@@ -25,6 +26,8 @@ function wsOpen() { return !!(ws && ws.readyState === WebSocket.OPEN); }
 async function connect() {
   const s = await cfg();
   if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+  // Each failed attempt is logged by Chrome as an extension error, so back off up to 30s while no server is running.
+  lastAttempt = Date.now();
   let sock;
   try { sock = new WebSocket(`ws://127.0.0.1:${s.port}/extension`); } catch { scheduleReconnect(); return; }
   ws = sock;
@@ -41,7 +44,7 @@ async function connect() {
 function scheduleReconnect() {
   if (reconnectTimer) return;
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
-  backoff = Math.min(backoff * 2, 10000);
+  backoff = Math.min(backoff * 2, 30000);
 }
 
 function reply(obj) { if (wsOpen()) ws.send(JSON.stringify(obj)); }
@@ -70,7 +73,7 @@ async function handleMessage(raw) {
 }
 
 chrome.alarms.create('ak-keepalive', { periodInMinutes: 0.5 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive') connect(); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive' && Date.now() - lastAttempt > 25000) connect(); });
 chrome.runtime.onStartup.addListener(() => connect());
 chrome.runtime.onInstalled.addListener((d) => {
   connect();
