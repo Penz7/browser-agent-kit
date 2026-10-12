@@ -73,6 +73,10 @@ function detectAgents() {
   if (has(path.join(home, '.cursor'))) found.push('cursor');
   if (has(path.join(home, '.gemini', 'settings.json')) || bin('gemini')) found.push('gemini');
   if (has(path.join(home, '.codeium', 'windsurf'))) found.push('windsurf');
+  if (has(path.join(vscodeGlobalStorage(), 'saoudrizwan.claude-dev'))) found.push('cline');
+  if (has(path.join(vscodeGlobalStorage(), 'rooveterinaryinc.roo-cline'))) found.push('roo');
+  if (has(path.join(home, '.kiro'))) found.push('kiro');
+  if (has(path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode')) || bin('opencode')) found.push('opencode');
   return found;
 }
 
@@ -120,8 +124,36 @@ function setupAntigravity() {
   return written.join(' and ') + '\n  In Antigravity: agent panel "..." -> MCP Servers -> Manage MCP Servers -> Refresh (or restart the IDE).';
 }
 
+// VS Code extension storage (Cline, Roo Code) is platform specific.
+function vscodeGlobalStorage() {
+  if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'Code', 'User', 'globalStorage');
+  if (process.platform === 'win32') return path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'Code', 'User', 'globalStorage');
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'Code', 'User', 'globalStorage');
+}
+
+// OpenCode uses its own schema: { mcp: { name: { type: 'local', command: [...], environment: {...} } } }
+function setupOpenCode() {
+  const file = path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode', 'opencode.json');
+  return mergeJson(file, (d) => {
+    if (!d.$schema) d.$schema = 'https://opencode.ai/config.json';
+    d.mcp = d.mcp || {};
+    d.mcp.browser = { type: 'local', command: ['node', SERVER], enabled: true, environment: mcpEntry().env };
+  });
+}
+
+// VS Code Copilot agent mode: project-level .vscode/mcp.json with a "servers" map.
+function setupCopilot() {
+  const file = path.join(process.cwd(), '.vscode', 'mcp.json');
+  return mergeJson(file, (d) => { d.servers = d.servers || {}; d.servers.browser = { type: 'stdio', ...mcpEntry() }; });
+}
+
 const AGENTS = {
   codex: setupCodex,
+  cline: () => setupJsonClient(path.join(vscodeGlobalStorage(), 'saoudrizwan.claude-dev', 'settings', 'cline_mcp_settings.json')),
+  roo: () => setupJsonClient(path.join(vscodeGlobalStorage(), 'rooveterinaryinc.roo-cline', 'settings', 'mcp_settings.json')),
+  kiro: () => setupJsonClient(path.join(home, '.kiro', 'settings', 'mcp.json')),
+  opencode: setupOpenCode,
+  copilot: setupCopilot,
   claude: setupClaude,
   cursor: () => setupJsonClient(path.join(home, '.cursor', 'mcp.json')),
   gemini: () => setupJsonClient(path.join(home, '.gemini', 'settings.json')),
@@ -191,7 +223,8 @@ switch (cmd) {
       console.log('  With no agent names: detects installed agents, configures all of them, opens chrome://extensions and waits for the extension.');
       console.log('  --open also opens chrome://extensions after configuring the named agents.');
       console.log('  antigravity --workspace writes ./.agents/mcp_config.json for the current project instead of the global file.');
-      console.log('  json prints a generic mcpServers block for Cline, Roo Code, OpenCode, etc.');
+      console.log('  cline / roo write the VS Code extension settings file; copilot writes ./.vscode/mcp.json for the current project.');
+      console.log('  json prints a generic mcpServers block for any other MCP client.');
       console.log('  --token generates a shared secret and puts it in the config (paste the same value into the extension Settings).');
       process.exit(1);
     }

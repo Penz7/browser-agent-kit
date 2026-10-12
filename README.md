@@ -2,236 +2,235 @@
 
 # 🧭 Browser Agent Kit
 
-**Cho mọi AI agent điều khiển Chrome của bạn, theo đúng cách Claude in Chrome làm.**
+**Let any AI agent drive your real Chrome, the way Claude in Chrome does.**
 
-Codex · Claude Code · Antigravity · Cursor · Gemini CLI · Windsurf · Cline / Roo / OpenCode (DeepSeek, Qwen, GLM…)
+Codex · Claude Code · Antigravity · Cursor · Gemini CLI · Windsurf · Cline · Roo Code · OpenCode · Kiro · VS Code Copilot · any MCP client (DeepSeek, Qwen, GLM, Llama…)
 
-[Cài đặt](#-cài-đặt-trong-2-phút) · [Cách hoạt động](#-cách-hoạt-động) · [Tool](#-các-tool-agent-có) · [Bảo mật](#-bảo-mật) · [Sự cố](#-sự-cố-thường-gặp)
+[Install](#-install-in-2-minutes) · [Per-agent guides](#-per-agent-guides) · [How it works](#-how-it-works) · [Tools](#-tools-the-agent-gets) · [Security](#-security) · [Troubleshooting](#-troubleshooting) · [Tiếng Việt](README.vi.md)
 
 </div>
 
 ---
 
-Một extension Chrome + một MCP server. Agent nào nói được MCP là dùng được, cùng một bộ tool, cùng một hành vi: mở tab trong group riêng, viền sáng trên tab đang thao tác, click theo phần tử, đọc trang có cấu trúc, chụp màn hình, chạy JS, đọc console, nút **Dừng** cho bạn.
+One Chrome extension plus one MCP server. Every agent that speaks MCP gets the same tools and the same behaviour: its own tab group, a glowing frame on the tab it is working on, element-level clicking, structured page reading, screenshots, JavaScript, console and network logs, and a **Stop** button for you.
 
 | | |
 |---|---|
-| 🧩 **Dùng chung** | Nhiều agent chạy cùng lúc vẫn dùng chung một extension, tự điều phối |
-| 🎯 **Click chính xác** | Mỗi phần tử có `ref_N`, agent click theo ref thay vì đoán tọa độ |
-| 👁 **Hai cách nhìn** | `read_page` cho cấu trúc, `screenshot` cho hình ảnh, phối hợp theo nhu cầu |
-| 🔒 **An toàn mặc định** | Allowlist site, từ chối trang web nối vào hub, nội dung trang được đánh dấu là dữ liệu |
-| ⚡ **Hai chế độ** | *Real*: sự kiện thật qua Chrome debugger. *Fast*: không debugger, nhẹ và nhanh |
-| 🟣 **Nhìn thấy agent làm gì** | Tab group "Agent", viền tím, thanh trạng thái, vòng sáng tại điểm click, nút Dừng |
+| 🧩 **Shared** | Several agents at once share one extension; the first server process becomes the hub, later ones relay through it |
+| 🎯 **Precise clicks** | Every interactive element gets a `ref_N`; agents click by ref instead of guessing pixels |
+| 👁 **Two ways to look** | `read_page` for structure, `screenshot` for pixels, combined as needed |
+| 🔒 **Safe by default** | Site allowlist, web pages cannot reach the hub, page content is marked as untrusted data |
+| ⚡ **Two input modes** | *Real*: trusted events through the Chrome debugger. *Fast*: no debugger, lighter and quicker |
+| 🟣 **Visible** | "Agent" tab group, purple frame, status bar, click ripple, Stop button |
 
 ---
 
-## 🚀 Cài đặt trong 2 phút
+## 🚀 Install in 2 minutes
 
-Yêu cầu: **Node.js 18+**, **Google Chrome**, quyền truy cập repo này trên GitHub.
+Requirements: **Node.js 18+**, **Google Chrome**, access to this repository on GitHub.
 
-### 1. Lấy code và chạy wizard
+### 1. Get the code and run the wizard
 
 ```bash
 gh repo clone Penz7/browser-agent-kit ~/.browser-agent-kit
 cd ~/.browser-agent-kit && npm install && npm run setup
 ```
 
-Không có `gh` thì dùng `git clone git@github.com:Penz7/browser-agent-kit.git ~/.browser-agent-kit`.
+No `gh`? Use `git clone git@github.com:Penz7/browser-agent-kit.git ~/.browser-agent-kit`.
 
-Wizard sẽ:
+The wizard:
 
-1. **Tự dò** agent đã cài trên máy (Codex, Claude Code, Antigravity, Cursor, Gemini CLI, Windsurf) và ghi config MCP cho tất cả.
-2. **Mở** `chrome://extensions` và **copy sẵn** đường dẫn extension vào clipboard.
-3. **Chờ** extension kết nối rồi báo OK.
+1. **Detects** the agents installed on this machine (Codex, Claude Code, Antigravity, Cursor, Gemini CLI, Windsurf, Cline, Roo Code, Kiro, OpenCode) and writes the MCP config for each.
+2. **Opens** `chrome://extensions` and **copies** the extension path to your clipboard.
+3. **Waits** for the extension to connect and reports OK.
 
-### 2. Nạp extension (một lần, Chrome bắt buộc làm tay)
+### 2. Load the extension (once; Chrome requires a manual step)
 
-Trong tab `chrome://extensions` vừa mở: bật **Developer mode** (góc phải trên) → **Load unpacked** → dán đường dẫn (đã trong clipboard) → Open. Một trang chào mừng sẽ hiện ra, chấm xanh nghĩa là đã nối.
+In the `chrome://extensions` tab: enable **Developer mode** (top right) → **Load unpacked** → paste the path from your clipboard → Open. A welcome page appears; a green dot means it is connected.
 
-### 3. Cho phép site rồi dùng
+### 3. Allow a site and go
 
-Mở site cần thao tác, bấm icon extension → **Allow this site**. Rồi trong agent:
+Open the site you want automated, click the extension icon → **Allow this site**. Then, in your agent:
 
-> Mở tab mới, vào example.com, đọc tiêu đề trang.
+> Open a new tab, go to example.com and read the page title.
 
-Xong. Tab mới nằm trong group **Agent**, viền tím khi agent đang thao tác.
+The new tab lands in the **Agent** tab group with a purple frame while the agent works.
 
 <details>
-<summary><b>Chỉ cài cho một agent cụ thể</b></summary>
+<summary><b>Configure one specific agent instead</b></summary>
 
 ```bash
-npm run setup -- antigravity        # hoặc: codex | claude | cursor | gemini | windsurf
-npm run setup -- codex claude       # nhiều agent một lúc
-npm run setup -- json               # in khối JSON cho Cline, Roo Code, OpenCode, Kiro…
-npm run setup -- antigravity --workspace   # chỉ bật cho dự án hiện tại (.agents/mcp_config.json)
-npm run setup -- antigravity --token       # sinh token bảo mật, xem mục Bảo mật
+npm run setup -- antigravity          # codex | claude | cursor | gemini | windsurf | cline | roo | kiro | opencode | copilot
+npm run setup -- codex claude         # several at once
+npm run setup -- json                 # print a generic mcpServers block for any other client
+npm run setup -- antigravity --workspace   # project-only config
+npm run setup -- antigravity --token       # generate a shared secret (see Security)
 ```
-
-| Agent | File được ghi |
-|---|---|
-| Codex CLI | `~/.codex/config.toml` |
-| Claude Code | `claude mcp add browser --scope user` |
-| Antigravity | `~/.gemini/config/mcp_config.json` (và file cũ `~/.gemini/antigravity/mcp_config.json` nếu có) |
-| Cursor | `~/.cursor/mcp.json` |
-| Gemini CLI | `~/.gemini/settings.json` |
-| Windsurf | `~/.codeium/windsurf/mcp_config.json` |
-| Cline, Roo, OpenCode, Kiro, Zed… | dán khối JSON từ `setup json` vào phần MCP của client |
-| DeepSeek, Qwen, GLM… | các model này dùng qua Cline / Roo / OpenCode, làm như dòng trên |
-
-Antigravity: sau khi ghi config, mở panel agent → `…` → **MCP Servers** → **Manage MCP Servers** → **Refresh**.
 </details>
 
 <details>
-<summary><b>Dạy agent cách dùng trình duyệt</b></summary>
-
-Tool có mô tả đầy đủ và server gửi kèm hướng dẫn qua MCP `instructions`, hầu hết agent tự biết dùng. Muốn chắc hơn:
-
-- Dán `configs/AGENTS.md.snippet` vào `AGENTS.md` / `CLAUDE.md` / `GEMINI.md` của dự án.
-- Claude Code: copy `skill/SKILL.md` vào `~/.claude/skills/browser-agent-kit/SKILL.md`.
-- Antigravity: tạo `.agents/rules/browser.md` với nội dung của snippet.
-</details>
-
-<details>
-<summary><b>Cập nhật</b></summary>
+<summary><b>Update</b></summary>
 
 ```bash
 cd ~/.browser-agent-kit && git pull && npm install
 ```
 
-Rồi bấm ↻ trên thẻ Browser Agent Kit trong `chrome://extensions`.
+Then click ↻ on the Browser Agent Kit card in `chrome://extensions`.
 </details>
 
 ---
 
-## 🔍 Cách hoạt động
+## 📚 Per-agent guides
+
+Each guide covers the one-line setup, the manual config file, how to activate the server inside that agent, where to put the rules that teach it to browse, and agent-specific troubleshooting.
+
+| Agent | Guide | Config written by `setup` |
+|---|---|---|
+| OpenAI Codex CLI | [docs/agents/codex.md](docs/agents/codex.md) | `~/.codex/config.toml` |
+| Claude Code | [docs/agents/claude-code.md](docs/agents/claude-code.md) | `claude mcp add` (user scope) |
+| Google Antigravity | [docs/agents/antigravity.md](docs/agents/antigravity.md) | `~/.gemini/config/mcp_config.json` |
+| Cursor | [docs/agents/cursor.md](docs/agents/cursor.md) | `~/.cursor/mcp.json` |
+| Gemini CLI | [docs/agents/gemini-cli.md](docs/agents/gemini-cli.md) | `~/.gemini/settings.json` |
+| Windsurf | [docs/agents/windsurf.md](docs/agents/windsurf.md) | `~/.codeium/windsurf/mcp_config.json` |
+| Cline (VS Code) | [docs/agents/cline.md](docs/agents/cline.md) | `cline_mcp_settings.json` |
+| Roo Code (VS Code) | [docs/agents/roo-code.md](docs/agents/roo-code.md) | `mcp_settings.json` |
+| OpenCode | [docs/agents/opencode.md](docs/agents/opencode.md) | `~/.config/opencode/opencode.json` |
+| Kiro | [docs/agents/kiro.md](docs/agents/kiro.md) | `~/.kiro/settings/mcp.json` |
+| VS Code Copilot (agent mode) | [docs/agents/vscode-copilot.md](docs/agents/vscode-copilot.md) | `./.vscode/mcp.json` |
+| DeepSeek, Qwen, GLM, Llama, other models | [docs/agents/other-models.md](docs/agents/other-models.md) | via Cline / Roo / OpenCode |
+| Any other MCP client (Zed, JetBrains, Continue…) | [docs/agents/other-clients.md](docs/agents/other-clients.md) | `setup json` |
+
+---
+
+## 🔍 How it works
 
 ```
 Agent (Codex / Claude / Antigravity / …)
-   │  MCP qua stdio
+   │  MCP over stdio
    ▼
 server/   MCP server (Node) ── ws://127.0.0.1:7851 ──▶  extension/   Chrome extension (MV3)
-          hub: process đầu giữ port,                          │ chrome.debugger (CDP) + content script
-          agent sau relay qua hub                             ▼
-                                                        Tab trong Chrome của bạn
+          hub: first process owns the port,                   │ chrome.debugger (CDP) + content script
+          later processes relay through it                    ▼
+                                                        A tab in your Chrome
 ```
 
-- **Agent** chỉ sinh lời gọi tool dạng JSON. **Server** dịch thành lệnh gửi qua WebSocket. **Extension** thực thi bằng API Chrome và trả kết quả.
-- **Vòng lặp** quan sát → suy luận → hành động: sau mỗi hành động agent nhận screenshot mới để tự kiểm tra.
-- **Ref ổn định**: content script gắn `ref_N` cho phần tử tương tác, sống tới khi trang điều hướng. Click theo ref tự cuộn phần tử vào giữa màn hình và báo nếu bị che.
-- **Tọa độ không lệch**: screenshot thu nhỏ về 1024px ngang; server và extension cùng tính một hệ số scale từ viewport nên tọa độ model đưa khớp cả trên Retina.
-- **Nhiều agent**: process server đầu tiên là hub, process sau tự thành leaf và relay. Không cần cấu hình.
+- The **agent** only emits JSON tool calls. The **server** turns them into commands over WebSocket. The **extension** executes them with Chrome APIs and returns the result.
+- **Observe → reason → act** loop: after most actions the agent receives a fresh screenshot and checks it before the next step.
+- **Stable refs**: a content script tags every interactive element with `ref_N`, valid until the page navigates. Clicking by ref scrolls the element into view and reports if something covers it.
+- **Coordinates never drift**: screenshots are downscaled to 1024px wide; server and extension compute the same scale from the viewport, so model coordinates map correctly even on Retina displays.
+- **Many agents**: the first server process is the hub, later ones become leaves and relay. No configuration.
 
-### Chế độ Real và Fast
+### Real vs Fast input mode
 
-| | Real (mặc định) | Fast |
+| | Real (default) | Fast |
 |---|---|---|
-| Chuột, phím | Sự kiện thật qua Chrome DevTools Protocol | Sự kiện DOM giả lập từ content script |
-| Thanh "is debugging this browser" | Hiện khi làm việc, tự ẩn sau 60s rảnh | Chỉ hiện khi dùng phím tắt, JS, console, kéo thả |
-| Console / network | Bắt được khi debugger đang gắn | Chỉ khi debugger được gắn tạm |
-| Phù hợp | Site khó, editor, kiểm tra `isTrusted` | Thao tác nhanh, giảm phiền |
+| Mouse, keyboard | Trusted events through Chrome DevTools Protocol | Synthetic DOM events from the content script |
+| "is debugging this browser" bar | Shown while working, released after 60s idle | Only for shortcuts, JavaScript, console, drag |
+| Console / network capture | While the debugger is attached | Only while temporarily attached |
+| Best for | Hard sites, editors, `isTrusted` checks | Quick tasks, fewer interruptions |
 
-Đổi trong icon extension → Settings → *Input mode*.
+Change it under extension icon → Settings → *Input mode*.
 
 ---
 
-## 🛠 Các tool agent có
+## 🛠 Tools the agent gets
 
-Tên tool giống Claude in Chrome nên prompt và skill viết cho Claude dùng lại được.
+Tool names mirror Claude in Chrome, so prompts and skills written for Claude carry over.
 
-| Tool | Việc làm |
+| Tool | What it does |
 |---|---|
-| `tabs_context` · `tabs_create` · `tabs_close` | liệt kê, mở (vào group Agent), đóng tab |
-| `navigate` | tới URL, `back`, `forward`, chờ load xong |
-| `computer` | `screenshot`, `left/right/middle/double/triple_click`, `left_click_drag`, `mouse_move`, `type`, `key`, `scroll`, `wait`, `zoom`. Click theo `ref` hoặc `coordinate` |
-| `read_page` | cây trang rút gọn, mỗi phần tử tương tác có `ref_N` |
-| `find` | tìm phần tử theo mô tả tự nhiên, trả về ref |
-| `get_page_text` | text toàn trang, phân trang bằng `offset` |
-| `form_input` | điền nhiều ô một lượt, bắn đúng event cho React / Vue |
-| `javascript_tool` | chạy JS trong trang qua CDP, không bị CSP chặn |
-| `read_console_messages` · `read_network_requests` | debug trang |
-| `file_upload` | gắn file local vào `<input type=file>` |
-| `resize_window` | đổi kích thước cửa sổ |
-| `browser_batch` | chạy nhiều bước, trả một screenshot cuối |
+| `tabs_context` · `tabs_create` · `tabs_close` | list, open (into the Agent group), close tabs |
+| `navigate` | go to a URL, `back`, `forward`, wait for load |
+| `computer` | `screenshot`, `left/right/middle/double/triple_click`, `left_click_drag`, `mouse_move`, `type`, `key`, `scroll`, `wait`, `zoom`; click by `ref` or `coordinate` |
+| `read_page` | compact page outline, every interactive element with a `ref_N` |
+| `find` | natural-language element search returning refs |
+| `get_page_text` | visible text, paginated with `offset` |
+| `form_input` | fill several fields at once with the right events for React / Vue |
+| `javascript_tool` | run JS in the page through CDP, not blocked by CSP |
+| `read_console_messages` · `read_network_requests` | debugging |
+| `file_upload` | attach local files to `<input type=file>` |
+| `resize_window` | resize the window |
+| `browser_batch` | run several steps, one screenshot at the end |
 
 ---
 
-## ⚙️ Cài đặt của extension
+## ⚙️ Settings
 
-Bấm icon → **Settings**.
+Extension icon → **Settings**.
 
-| Mục | Mặc định | Ý nghĩa |
+| Setting | Default | Meaning |
 |---|---|---|
-| Port | 7851 | phải trùng `BROWSER_KIT_PORT` của server |
-| Shared token | rỗng | bật để chỉ process biết token mới dùng được hub |
-| Allowed sites / Allow all | rỗng / tắt | site agent được phép thao tác |
-| JavaScript dialogs | auto-accept | `alert/confirm/prompt` luôn được tự đóng để không treo |
-| Input mode | Real | xem bảng trên |
-| Release debugger after idle | 60s | 0 = giữ luôn (cần nếu muốn bắt console liên tục) |
-| Overlay + tên hiển thị | bật, "AI agent" | viền tím và thanh trạng thái |
-| Tab group + tên + màu | bật, "Agent", tím | gom tab agent mở |
+| Port | 7851 | must match the server's `BROWSER_KIT_PORT` |
+| Shared token | empty | only processes that know it can use the hub |
+| Allowed sites / Allow all | empty / off | where the agent may act |
+| JavaScript dialogs | auto-accept | `alert/confirm/prompt` are always auto-closed so nothing hangs |
+| Input mode | Real | see table above |
+| Release debugger after idle | 60s | 0 keeps it attached (needed for continuous console capture) |
+| Overlay + display name | on, "AI agent" | purple frame and status bar |
+| Tab group + name + color | on, "Agent", purple | groups tabs the agent opens |
 
-Biến môi trường của server (đặt trong config MCP):
+Server environment variables (set in the MCP config):
 
-| Biến | Mặc định | Ý nghĩa |
+| Variable | Default | Meaning |
 |---|---|---|
-| `BROWSER_KIT_PORT` | 7851 | port hub |
-| `BROWSER_KIT_TOKEN` | rỗng | token chia sẻ, trùng với extension |
-| `BROWSER_KIT_MAX_WIDTH` | 1024 | bề ngang tối đa của screenshot |
-| `BROWSER_KIT_AUTO_SCREENSHOT` | 1 | `0` để không tự chụp sau mỗi hành động (tiết kiệm token cho model yếu) |
-| `BROWSER_KIT_IMAGE_FORMAT` / `_QUALITY` | jpeg / 85 | `png` nếu cần nét hơn |
-| `BROWSER_KIT_EXTENSION_ID` | rỗng | ghim ID extension được phép nối hub |
-| `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | thư mục được phép cho `file_upload` |
-| `BROWSER_KIT_DEBUG` | 0 | `1` để log ra stderr |
+| `BROWSER_KIT_PORT` | 7851 | hub port |
+| `BROWSER_KIT_TOKEN` | empty | shared secret, same value in the extension |
+| `BROWSER_KIT_MAX_WIDTH` | 1024 | max screenshot width |
+| `BROWSER_KIT_AUTO_SCREENSHOT` | 1 | `0` disables the screenshot after each action (saves tokens for weaker models) |
+| `BROWSER_KIT_IMAGE_FORMAT` / `_QUALITY` | jpeg / 85 | `png` for sharper text |
+| `BROWSER_KIT_EXTENSION_ID` | empty | pin the extension id allowed to connect |
+| `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | folders allowed for `file_upload` |
+| `BROWSER_KIT_DEBUG` | 0 | `1` logs to stderr |
 
-CLI: `browser-agent-kit` (chạy server) · `setup [agent…]` · `extension` (in đường dẫn) · `doctor` (kiểm tra kết nối).
-
----
-
-## 🔒 Bảo mật
-
-Extension giữ quyền `debugger` + `scripting` + `<all_urls>`, nên **ai nói chuyện được với hub là điều khiển được Chrome**. Kit chặn các cửa đó:
-
-- **Trang web không thể nối vào hub.** Trình duyệt luôn gửi header `Origin` khi mở WebSocket; hub từ chối mọi Origin `http/https/file/null`, chỉ nhận `chrome-extension://…` trên `/extension` và không-Origin (process local) trên `/client`.
-- **Token chia sẻ** (`setup <agent> --token`): khi bật, cả extension lẫn agent thứ hai phải xưng token trước khi gửi lệnh. Nên bật trên máy dùng chung.
-- **`file_upload`** chỉ nhận file thường trong `$HOME` / thư mục tạm, **không bao giờ** nhận file hoặc thư mục ẩn (`.ssh`, `.aws`, `.gemini`, `.config`…).
-- **Allowlist**: `file:`, `chrome:`, `javascript:`, `data:` không bao giờ được điều khiển, kể cả Allow all. So khớp theo host và subdomain, không bị lừa bởi `example.com.evil.com`.
-- **Nội dung trang là dữ liệu**: mọi text lấy từ trang được bọc `<untrusted_page_content>`; ref sống trong isolated world nên script của trang không đọc hay sửa được.
-- **Overlay** trong shadow DOM, chỉ chèn text bằng `textContent`.
-
-Phần còn lại là của bạn: agent được chạy JS và đọc trang trên site đã cho phép, nên chỉ Allow site cần thiết và yêu cầu agent xác nhận trước thao tác không đảo ngược được (mua hàng, gửi tin, xóa).
+CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `extension` (print the path) · `doctor` (check the connection).
 
 ---
 
-## 🩺 Sự cố thường gặp
+## 🔒 Security
 
-| Triệu chứng | Nguyên nhân / cách xử lý |
+The extension holds `debugger` + `scripting` + `<all_urls>`, so **whoever can talk to the hub can drive Chrome**. The kit closes those doors:
+
+- **Web pages cannot reach the hub.** Browsers always send an `Origin` header on WebSocket upgrades; the hub rejects every `http/https/file/null` origin, accepts only `chrome-extension://…` on `/extension` and origin-less local processes on `/client`.
+- **Shared token** (`setup <agent> --token`): when set, both the extension and any second agent must present it before sending commands. Recommended on shared machines.
+- **`file_upload`** only accepts regular files under `$HOME` or the temp folder and **never** hidden files or dot-directories (`.ssh`, `.aws`, `.gemini`, `.config`…).
+- **Allowlist**: `file:`, `chrome:`, `javascript:`, `data:` can never be controlled, even with Allow all. Matching is by host and subdomain; `example.com.evil.com` does not match `example.com`.
+- **Page content is data**: everything read from a page is wrapped in `<untrusted_page_content>`; refs live in the isolated world, page scripts cannot read or forge them.
+- **Overlay** lives in a shadow DOM and only inserts text through `textContent`.
+
+The rest is on you: the agent can run JavaScript and read pages on allowed sites, so allow only what you need and have the agent confirm before irreversible actions (purchases, sending messages, deleting).
+
+---
+
+## 🩺 Troubleshooting
+
+| Symptom | Cause / fix |
 |---|---|
-| Icon đỏ, "Not connected" | Chưa có agent nào khởi động server, hoặc port lệch. Mở Settings kiểm tra port, bấm Reconnect. `browser-agent-kit doctor` để thử. |
-| Agent nói "Site not allowed" | Bấm icon extension trên site đó → Allow this site. |
-| Thanh "Browser Agent Kit is debugging this browser" | Bình thường ở chế độ Real. Đừng bấm Cancel. Muốn không bao giờ thấy: chọn Fast, hoặc chạy Chrome với `--silent-debugger-extension-api`. |
-| "Cannot attach debugger" | Tab đang mở DevTools. Đóng DevTools của tab đó. |
-| "Cannot run on this page" | Trang `chrome://`, Chrome Web Store, PDF viewer. Chrome không cho extension can thiệp. |
-| Click giả lập không mở được dropdown | Menu `<select>` gốc cần `form_input`, hoặc chuyển sang Real. |
-| Nội dung trong iframe không thấy ở `read_page` | Chỉ frame chính được liệt kê. Dùng screenshot và click theo tọa độ cho iframe. |
-| Agent bị từ chối với "user pressed Stop" | Bạn đã bấm Dừng trên overlay. Bấm icon extension → Resume. |
-| Antigravity không thấy tool | Manage MCP Servers → Refresh, hoặc khởi động lại IDE. |
+| Red icon, "Not connected" | No agent has started the server yet, or the port differs. Check Settings, press Reconnect, or run `browser-agent-kit doctor`. |
+| Agent reports "Site not allowed" | Click the extension icon on that site → Allow this site. |
+| "Browser Agent Kit is debugging this browser" bar | Normal in Real mode. Do not press Cancel. To never see it: switch to Fast, or launch Chrome with `--silent-debugger-extension-api`. |
+| "Cannot attach debugger" | DevTools is open on that tab. Close it. |
+| "Cannot run on this page" | `chrome://` pages, the Chrome Web Store and the PDF viewer are off limits for extensions. |
+| Synthetic click does not open a dropdown | Native `<select>` menus need `form_input`, or switch to Real. |
+| iframe content missing from `read_page` | Only the main frame is listed. Use screenshots and coordinate clicks for iframes. |
+| Agent is refused with "user pressed Stop" | You pressed Stop on the overlay. Extension icon → Resume. |
+| Agent does not see the tools | Restart the agent or refresh its MCP server list (see the per-agent guide). |
 
 ---
 
-## 🗺 Chưa có
+## 🗺 Not yet
 
-- `gif_creator` ghi thao tác thành ảnh động.
-- Đọc DOM bên trong iframe cross-origin.
-- `find` bằng model nhỏ thay vì so khớp text.
+- `gif_creator` (record actions as an animated GIF).
+- DOM access inside cross-origin iframes.
+- Model-based `find` instead of text matching.
 
-**Giới hạn thật:** lớp tool giống Claude in Chrome, nhưng kết quả cuối phụ thuộc model. Model yếu về vision nên dùng `read_page` + click theo ref thay vì tọa độ, và có thể tắt auto screenshot để giảm token.
+**Honest limit:** the tool layer matches Claude in Chrome, but results still depend on the model. Weak-vision models should rely on `read_page` and ref clicks instead of coordinates, and can disable auto screenshots to save tokens.
 
-## 🧪 Phát triển
+## 🧪 Development
 
 ```bash
-npm test          # jsdom tests cho DOM/phím/allowlist + smoke test MCP ↔ server ↔ extension giả lập (gồm test bảo mật)
+npm test     # jsdom tests for DOM/keys/allowlist + MCP ↔ server ↔ fake-extension smoke tests (incl. security)
 ```
 
-Cấu trúc: `extension/` (MV3) · `server/src/` (MCP server, bridge hub/leaf) · `bin/cli.js` · `skill/SKILL.md` · `configs/`.
+Layout: `extension/` (MV3) · `server/src/` (MCP server, hub/leaf bridge) · `bin/cli.js` · `skill/SKILL.md` · `configs/` · `docs/agents/`.
 
 MIT
