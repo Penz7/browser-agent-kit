@@ -54,12 +54,27 @@ function setupClaude() {
 }
 
 const home = os.homedir();
+
+// Antigravity (Google): global config at ~/.gemini/config/mcp_config.json (older builds used
+// ~/.gemini/antigravity/mcp_config.json); a workspace file lives at .agents/mcp_config.json.
+function setupAntigravity() {
+  const workspace = rest.includes('--workspace');
+  if (workspace) return setupJsonClient(path.join(process.cwd(), '.agents', 'mcp_config.json'));
+  const current = path.join(home, '.gemini', 'config', 'mcp_config.json');
+  const legacy = path.join(home, '.gemini', 'antigravity', 'mcp_config.json');
+  const written = [setupJsonClient(current)];
+  if (fs.existsSync(legacy)) written.push(setupJsonClient(legacy));
+  return written.join(' and ') + '\n  In Antigravity: agent panel "..." -> MCP Servers -> Manage MCP Servers -> Refresh (or restart the IDE).';
+}
+
 const AGENTS = {
   codex: setupCodex,
   claude: setupClaude,
   cursor: () => setupJsonClient(path.join(home, '.cursor', 'mcp.json')),
   gemini: () => setupJsonClient(path.join(home, '.gemini', 'settings.json')),
   windsurf: () => setupJsonClient(path.join(home, '.codeium', 'windsurf', 'mcp_config.json')),
+  antigravity: setupAntigravity,
+  agy: setupAntigravity,
   json: () => { console.log(JSON.stringify({ mcpServers: { browser: mcpEntry() } }, null, 2)); return null; }
 };
 
@@ -103,10 +118,11 @@ switch (cmd) {
     await import(SERVER);
     break;
   case 'setup': {
-    const names = rest.length ? rest : [];
+    const names = rest.filter((n) => !n.startsWith('--'));
     if (!names.length || names.some((n) => !AGENTS[n])) {
       console.log(`Usage: browser-agent-kit setup <${Object.keys(AGENTS).join('|')}> [...]`);
-      console.log('  json prints a generic mcpServers block for Antigravity, Cline, Roo Code, OpenCode, etc.');
+      console.log('  antigravity --workspace writes ./.agents/mcp_config.json for the current project instead of the global file.');
+      console.log('  json prints a generic mcpServers block for Cline, Roo Code, OpenCode, etc.');
       process.exit(1);
     }
     for (const n of names) {

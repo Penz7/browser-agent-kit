@@ -1,5 +1,5 @@
 #!/bin/sh
-# One-line installer: curl -fsSL https://raw.githubusercontent.com/Penz7/browser-agent-kit/main/install.sh | sh -s -- [codex|claude|cursor|gemini|windsurf|json ...]
+# One-line installer: curl -fsSL https://raw.githubusercontent.com/Penz7/browser-agent-kit/main/install.sh | sh -s -- [codex|claude|antigravity|cursor|gemini|windsurf|json ...]
 set -e
 DIR="${BROWSER_KIT_DIR:-$HOME/.browser-agent-kit}"
 REPO="${BROWSER_KIT_REPO:-https://github.com/Penz7/browser-agent-kit.git}"
@@ -25,8 +25,9 @@ else
   echo "Installed. Configure an agent with one of:"
   echo "  node $DIR/bin/cli.js setup codex"
   echo "  node $DIR/bin/cli.js setup claude"
+  echo "  node $DIR/bin/cli.js setup antigravity"
   echo "  node $DIR/bin/cli.js setup cursor | gemini | windsurf"
-  echo "  node $DIR/bin/cli.js setup json     # Antigravity, Cline, Roo, OpenCode..."
+  echo "  node $DIR/bin/cli.js setup json     # Cline, Roo, OpenCode..."
   echo
   echo "Then load the extension in Chrome: chrome://extensions -> Developer mode -> Load unpacked ->"
   echo "  $DIR/extension"

@@ -28,10 +28,11 @@ Thay `codex` bằng agent bạn dùng, có thể ghi nhiều cái một lúc:
 |---|---|---|
 | Codex CLI | `... \| sh -s -- codex` | `~/.codex/config.toml` |
 | Claude Code | `... \| sh -s -- claude` | `claude mcp add` (user scope) |
+| Antigravity (agy) | `... \| sh -s -- antigravity` | `~/.gemini/config/mcp_config.json` (và file cũ `~/.gemini/antigravity/mcp_config.json` nếu có) |
 | Cursor | `... \| sh -s -- cursor` | `~/.cursor/mcp.json` |
 | Gemini CLI | `... \| sh -s -- gemini` | `~/.gemini/settings.json` |
 | Windsurf | `... \| sh -s -- windsurf` | `~/.codeium/windsurf/mcp_config.json` |
-| Antigravity, Cline, Roo Code, OpenCode, Kiro... | `... \| sh -s -- json` | in ra khối JSON, bạn dán vào phần MCP của client |
+| Cline, Roo Code, OpenCode, Kiro... | `... \| sh -s -- json` | in ra khối JSON, bạn dán vào phần MCP của client |
 | DeepSeek | dùng Cline / Roo / OpenCode với model DeepSeek, rồi làm như dòng trên | |
 
 Đã clone sẵn rồi thì dùng trực tiếp:
@@ -47,6 +48,22 @@ Không muốn cài gì cả: trong config MCP dùng `npx` (lần đầu hơi ch�
 ```json
 { "mcpServers": { "browser": { "command": "npx", "args": ["-y", "github:Penz7/browser-agent-kit"] } } }
 ```
+
+<details>
+<summary><b>Antigravity chi tiết</b></summary>
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Penz7/browser-agent-kit/main/install.sh | sh -s -- antigravity
+```
+
+Lệnh trên ghi server `browser` vào `~/.gemini/config/mcp_config.json`. Sau đó trong Antigravity: mở panel agent, bấm `…` → **MCP Servers** → **Manage MCP Servers** → **Refresh** (hoặc khởi động lại IDE). Tool `tabs_context`, `computer`, `read_page`... sẽ hiện trong danh sách.
+
+Chỉ muốn bật cho một dự án: chạy trong thư mục dự án `node ~/.browser-agent-kit/bin/cli.js setup antigravity --workspace`, file ghi ra là `.agents/mcp_config.json`.
+
+Để agent biết cách dùng, tạo `.agents/rules/browser.md` trong dự án với nội dung của `configs/AGENTS.md.snippet`.
+
+Nếu `~/.gemini/config/mcp_config.json` không tồn tại sau khi chạy lệnh, mở **View raw config** trong màn hình Manage MCP Servers để biết đường dẫn thật của bản Antigravity bạn đang dùng, rồi dán khối JSON từ `node ~/.browser-agent-kit/bin/cli.js setup json` vào đó.
+</details>
 
 **Bước 2. Nạp extension vào Chrome** (một lần):
 

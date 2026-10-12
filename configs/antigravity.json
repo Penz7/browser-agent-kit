@@ -1,0 +1,14 @@
+{
+  "_comment": "Antigravity: global file ~/.gemini/config/mcp_config.json (older builds: ~/.gemini/antigravity/mcp_config.json), or per-project .agents/mcp_config.json. Or just run: node bin/cli.js setup antigravity",
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": [
+        "~/.browser-agent-kit/server/src/index.js"
+      ],
+      "env": {
+        "BROWSER_KIT_PORT": "7851"
+      }
+    }
+  }
+}
