@@ -50,7 +50,7 @@ async function connect(force = false) {
   if (wsBusy()) return;
   const now = Date.now();
   if (force) markHot();
-  else if (now >= st.hotUntil && now - st.lastAttempt < IDLE_INTERVAL_MS) return; // idle: wait for the next probe or a wake
+  else if (now >= st.hotUntil && now - st.lastAttempt < (nativeAvailable ? NATIVE_IDLE_INTERVAL_MS : IDLE_INTERVAL_MS)) return; // idle: wait for a probe or a wake
   lastAttempt = now;
   setConnState({ lastAttempt: now });
   let sock;
@@ -79,6 +79,32 @@ function scheduleReconnect() {
   reconnectTimer = setTimeout(() => { reconnectTimer = null; connect(); }, backoff);
   backoff = Math.min(backoff * 2, MAX_BACKOFF_MS);
 }
+
+// Optional native messaging host (installed by `browser-agent-kit native`): it probes the port silently and tells us
+// when a server appears, so idle probing from here can be very rare. Its pings also keep this worker alive.
+const NATIVE_HOST = 'com.penz7.browser_agent_kit';
+const NATIVE_IDLE_INTERVAL_MS = 60 * 60 * 1000;
+let nativePort = null;
+let nativeAvailable = false;
+let nativeRetryAt = 0;
+async function connectNative() {
+  if (nativePort || Date.now() < nativeRetryAt) return;
+  nativeRetryAt = Date.now() + 10 * 60 * 1000; // if the host is missing, look again in 10 minutes
+  let port;
+  try { port = chrome.runtime.connectNative(NATIVE_HOST); } catch { return; }
+  nativePort = port;
+  port.onMessage.addListener(async (m) => {
+    if (!m) return;
+    if (m.type === 'hello') { nativeAvailable = true; nativeRetryAt = 0; port.postMessage({ type: 'watch', port: (await cfg()).port }); }
+    else if (m.type === 'up') { backoff = 1000; connect(true); }
+  });
+  port.onDisconnect.addListener(() => {
+    void chrome.runtime.lastError; // read it so Chrome does not log "Unchecked runtime.lastError" when the host is absent
+    nativePort = null;
+    nativeAvailable = false;
+  });
+}
+connectNative();
 
 // The server opens this URL in a tab when an agent needs the browser while the extension is idle.
 async function isWakeUrl(url) {
@@ -123,7 +149,7 @@ async function handleMessage(raw) {
 }
 
 chrome.alarms.create('ak-keepalive', { periodInMinutes: 1 });
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive' && !reconnectTimer) connect(); });
+chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive') { connectNative(); if (!reconnectTimer) connect(); } });
 chrome.runtime.onStartup.addListener(() => connect(true));
 chrome.runtime.onInstalled.addListener((d) => {
   connect(true);
@@ -133,6 +159,7 @@ chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
   settings = await getSettings();
   if (changes.port || changes.token) { backoff = 1000; if (ws) ws.close(); else connect(true); }
+  if (changes.port && nativePort) { try { nativePort.postMessage({ type: 'watch', port: settings.port }); } catch { /* host gone */ } }
 });
 chrome.runtime.onMessage.addListener((msg, _sender, respond) => {
   if (!msg) return;

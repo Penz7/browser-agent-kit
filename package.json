@@ -17,7 +17,7 @@
   "scripts": {
     "start": "node server/src/index.js",
     "setup": "node bin/cli.js setup",
-    "test": "node server/test/dom.test.mjs && node server/test/smoke.mjs"
+    "test": "node server/test/dom.test.mjs && node server/test/native.test.mjs && node server/test/smoke.mjs"
   },
   "engines": {
     "node": ">=18"

@@ -4,11 +4,13 @@
 //   browser-agent-kit setup <agent>   -> write MCP config for codex | claude | cursor | gemini | windsurf | json
 //   browser-agent-kit extension       -> print the extension folder to load in chrome://extensions
 //   browser-agent-kit doctor          -> check whether the Chrome extension is connected
+//   browser-agent-kit native          -> register the native messaging host (silent server detection)
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
 import { spawnSync } from 'node:child_process';
+import { extensionIdForPath } from '../server/src/extension-id.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = path.join(ROOT, 'server', 'src', 'index.js');
@@ -22,6 +24,7 @@ if (rest.includes('--token') && !TOKEN) {
   const { randomBytes } = await import('node:crypto');
   TOKEN = randomBytes(24).toString('hex');
 }
+const idArg = (args) => { const i = args.indexOf('--extension-id'); return i >= 0 ? args[i + 1] : ''; };
 const mcpEntry = () => ({ command: 'node', args: [SERVER], env: { BROWSER_KIT_PORT: PORT, ...(TOKEN ? { BROWSER_KIT_TOKEN: TOKEN } : {}) } });
 
 function mergeJson(file, mutate) {
@@ -203,6 +206,67 @@ const AGENTS = {
   json: () => { console.log(JSON.stringify({ mcpServers: { browser: mcpEntry() } }, null, 2)); return null; }
 };
 
+// ---- native messaging host: lets the extension learn silently when a server starts (no logged WebSocket errors) ----
+const NATIVE_NAME = 'com.penz7.browser_agent_kit';
+const NATIVE_HOST_JS = path.join(ROOT, 'server', 'src', 'native-host.js');
+const kitDir = process.platform === 'win32' ? path.join(process.env.APPDATA || path.join(home, 'AppData', 'Roaming'), 'browser-agent-kit') : path.join(home, '.config', 'browser-agent-kit');
+
+function nativeManifestDirs() {
+  if (process.platform === 'darwin') {
+    const base = path.join(home, 'Library', 'Application Support');
+    return ['Google/Chrome', 'Google/Chrome Beta', 'Google/Chrome Canary', 'Chromium', 'BraveSoftware/Brave-Browser', 'Microsoft Edge']
+      .map((b) => ({ browserDir: path.join(base, b), dir: path.join(base, b, 'NativeMessagingHosts') }));
+  }
+  const base = path.join(home, '.config');
+  return ['google-chrome', 'google-chrome-beta', 'google-chrome-unstable', 'chromium', 'BraveSoftware/Brave-Browser', 'microsoft-edge']
+    .map((b) => ({ browserDir: path.join(base, b), dir: path.join(base, b, 'NativeMessagingHosts') }));
+}
+const WIN_REG_KEYS = ['HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts', 'HKCU\\Software\\Chromium\\NativeMessagingHosts', 'HKCU\\Software\\Microsoft\\Edge\\NativeMessagingHosts'];
+
+function installNative(extensionId) {
+  const id = extensionId || extensionIdForPath(EXTENSION);
+  fs.mkdirSync(kitDir, { recursive: true });
+  let wrapper;
+  if (process.platform === 'win32') {
+    wrapper = path.join(kitDir, 'native-host.bat');
+    fs.writeFileSync(wrapper, `@echo off\r\n"${process.execPath}" "${NATIVE_HOST_JS}"\r\n`);
+  } else {
+    wrapper = path.join(kitDir, 'native-host.sh');
+    fs.writeFileSync(wrapper, `#!/bin/sh\nexec "${process.execPath}" "${NATIVE_HOST_JS}"\n`, { mode: 0o755 });
+    fs.chmodSync(wrapper, 0o755);
+  }
+  const manifest = JSON.stringify({ name: NATIVE_NAME, description: 'Browser Agent Kit: tells the extension when the MCP server is up', path: wrapper, type: 'stdio', allowed_origins: [`chrome-extension://${id}/`] }, null, 2) + '\n';
+  const written = [];
+  if (process.platform === 'win32') {
+    const file = path.join(kitDir, `${NATIVE_NAME}.json`);
+    fs.writeFileSync(file, manifest);
+    for (const key of WIN_REG_KEYS) {
+      const r = spawnSync('reg', ['add', `${key}\\${NATIVE_NAME}`, '/ve', '/t', 'REG_SZ', '/d', file, '/f'], { stdio: 'ignore' });
+      if (!r.error && r.status === 0) written.push(key);
+    }
+  } else {
+    const dirs = nativeManifestDirs();
+    for (const { browserDir, dir } of dirs) {
+      if (!fs.existsSync(browserDir) && dir !== dirs[0].dir) continue; // always register for Chrome, others only if installed
+      fs.mkdirSync(dir, { recursive: true });
+      const file = path.join(dir, `${NATIVE_NAME}.json`);
+      fs.writeFileSync(file, manifest);
+      written.push(file);
+    }
+  }
+  return { id, written, wrapper };
+}
+
+function removeNative() {
+  const removed = [];
+  if (process.platform === 'win32') {
+    for (const key of WIN_REG_KEYS) { const r = spawnSync('reg', ['delete', `${key}\\${NATIVE_NAME}`, '/f'], { stdio: 'ignore' }); if (!r.error && r.status === 0) removed.push(key); }
+  } else {
+    for (const { dir } of nativeManifestDirs()) { const f = path.join(dir, `${NATIVE_NAME}.json`); if (fs.existsSync(f)) { fs.unlinkSync(f); removed.push(f); } }
+  }
+  return removed;
+}
+
 function printNext() {
   if (TOKEN) console.log(`
 Shared token (also paste it into the extension: icon -> Settings -> "Shared token"):
@@ -272,6 +336,12 @@ switch (cmd) {
       const where = AGENTS[n]();
       if (where) console.log(`${n}: configured -> ${where}`);
     }
+    if (!rest.includes('--no-native')) {
+      try {
+        const n = installNative(idArg(rest));
+        console.log(`native host: registered for extension id ${n.id} (${n.written.length} location${n.written.length === 1 ? '' : 's'})`);
+      } catch (e) { console.log(`native host: skipped (${e.message})`); }
+    }
     printNext();
     if (wizard || rest.includes('--open')) {
       const copied = copyToClipboard(EXTENSION);
@@ -295,7 +365,24 @@ switch (cmd) {
       const where = REMOVERS[n]();
       console.log(where ? `${n}: removed from ${where}` : `${n}: nothing to remove`);
     }
+    const gone = removeNative();
+    if (gone.length) console.log(`native host: removed (${gone.length} location${gone.length === 1 ? '' : 's'})`);
     console.log('\nThe Chrome extension is untouched; remove it from chrome://extensions if you want a full reset.');
+    break;
+  }
+  case 'native': {
+    if (rest.includes('--remove')) {
+      const gone = removeNative();
+      console.log(gone.length ? `Removed the native messaging host from:\n  ${gone.join('\n  ')}` : 'No native messaging host was registered.');
+      break;
+    }
+    const n = installNative(idArg(rest));
+    console.log(`Native messaging host registered for extension id ${n.id}.`);
+    console.log(`  wrapper:  ${n.wrapper}`);
+    for (const w of n.written) console.log(`  manifest: ${w}`);
+    console.log(`\nThe id above is derived from the extension folder (${EXTENSION}).`);
+    console.log('If chrome://extensions shows a different id for Browser Agent Kit, run: browser-agent-kit native --extension-id <id>');
+    console.log('Then reload the extension once. From now on it learns about a starting server from the host, with no logged connection errors.');
     break;
   }
   case 'extension':
@@ -305,6 +392,6 @@ switch (cmd) {
     await doctor();
     break;
   default:
-    console.log('Unknown command. Use: serve | setup [agent…] | remove [agent…] | extension | doctor');
+    console.log('Unknown command. Use: serve | setup [agent…] | remove [agent…] | native [--extension-id ID | --remove] | extension | doctor');
     process.exit(1);
 }

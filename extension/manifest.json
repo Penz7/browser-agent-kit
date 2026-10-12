@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "description": "Let any AI agent (Codex, Claude Code, Antigravity, DeepSeek via Cline...) control this Chrome through MCP.",
   "minimum_chrome_version": "116",
-  "permissions": ["debugger", "tabs", "tabGroups", "scripting", "storage", "alarms", "downloads"],
+  "permissions": ["debugger", "tabs", "tabGroups", "scripting", "storage", "alarms", "downloads", "nativeMessaging"],
   "host_permissions": ["<all_urls>"],
   "background": { "service_worker": "background.js", "type": "module" },
   "action": { "default_popup": "popup.html", "default_title": "Browser Agent Kit" },
