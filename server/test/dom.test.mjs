@@ -123,6 +123,13 @@ dom.window.document.elementFromPoint = () => null;
 const sc = await agentDom('scroll', { dx: 0, dy: 300 });
 assert(scrolled && scrolled.top === 300 && scrolled.left === 0 && sc.scroller === 'window', 'animated scroll adds up to the requested distance on window.scrollBy');
 
+// probe (wait_for)
+assert(agentDom('probe', { text: 'sign IN' }).found === true, 'probe finds visible text case-insensitively');
+assert(agentDom('probe', { text: 'no such text zzz' }).found === false, 'probe reports missing text');
+assert(agentDom('probe', { selector: 'button' }).found === true, 'probe finds a visible element by selector');
+assert(agentDom('probe', { selector: '#nope' }).found === false, 'probe reports a missing selector');
+assert(/Bad selector/.test(agentDom('probe', { selector: '[[' }).error || ''), 'probe reports an invalid selector');
+
 // overlay
 global.chrome = { runtime: { sendMessage() {} } };
 agentDom('overlay', { state: 'show', text: 'Đọc trang', agent: 'Codex', x: 10, y: 10 });

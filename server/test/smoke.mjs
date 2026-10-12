@@ -32,7 +32,9 @@ function fakeExtension(port = PORT) {
           find: { url: page.url, matches: [{ score: 13, line: '[ref_1] button "Sign in"' }] },
           form_input: { results: [{ ref: 'ref_1', ok: true, name: 'Email' }] },
           evaluate: { type: 'object', value: { a: 1 } },
-          type: { typed: 3, into: 'Email', via: 'dom' }
+          type: { typed: 3, into: 'Email', via: 'dom' },
+          wait_for: { ok: msg.params.text !== 'never', waited: 12, what: `text "${msg.params.text}"` },
+          'downloads.list': { items: [{ state: 'complete', filename: '/tmp/report.pdf', bytes: 10, totalBytes: 10, url: 'https://example.com/report.pdf' }], waited: 0 }
         };
         if (msg.method === 'navigate' && msg.params.url === 'chrome://bad') return ws.send(JSON.stringify({ id: msg.id, ok: false, error: 'Site not allowed: chrome://bad' }));
         if (msg.method === 'navigate') return ws.send(JSON.stringify({ id: msg.id, ok: true, result: { tabId: msg.params.tabId, ...page } }));
@@ -104,6 +106,13 @@ assert(await closeCode(`ws://127.0.0.1:${PORT}/extension`, { headers: { Origin: 
 assert(await closeCode(`ws://127.0.0.1:${PORT}/client`, {}, { id: 'x', method: 'tabs.context', params: {} }) === 4001, 'leaf without hello/token cannot issue commands');
 assert(await closeCode(`ws://127.0.0.1:${PORT}/client`, {}, { type: 'hello', token: 'wrong' }) === 4001, 'leaf with wrong token is closed');
 assert(calls.length === callsBefore, 'rejected connections never reached the extension');
+
+r = await client.callTool({ name: 'wait_for', arguments: { tabId: 7, text: 'Welcome' } });
+assert(!r.isError && /Ready: text "Welcome"/.test(r.content[0].text), 'wait_for reports the condition that was met');
+r = await client.callTool({ name: 'wait_for', arguments: { tabId: 7, text: 'never', timeout: 500 } });
+assert(r.isError && /Timed out/.test(r.content[0].text), 'wait_for times out with an error the agent can act on');
+r = await client.callTool({ name: 'list_downloads', arguments: {} });
+assert(!r.isError && /complete\s+\/tmp\/report\.pdf/.test(r.content[0].text), 'list_downloads lists saved paths');
 
 r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: [path.join(process.env.HOME || '/', '.ssh', 'id_rsa')] } });
 assert(r.isError && /hidden files|not found/i.test(r.content[0].text), 'file_upload refuses dot-directories');

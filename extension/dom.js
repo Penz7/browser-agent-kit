@@ -428,6 +428,25 @@ export function agentDom(action, args) {
       d.querySelectorAll('[data-ak-upload]').forEach((e) => e.removeAttribute('data-ak-upload'));
       return { ok: true };
 
+    // Probes for wait_for. Each returns { found: boolean, detail }.
+    case 'probe': {
+      if (args.text != null) {
+        const hay = clean(d.body ? d.body.innerText : '').toLowerCase();
+        return { found: hay.includes(clean(args.text).toLowerCase()) };
+      }
+      if (args.selector) {
+        let els;
+        try { els = Array.from(d.querySelectorAll(args.selector)); } catch (e) { return { error: `Bad selector: ${e.message}` }; }
+        const vis = els.filter((el) => !isHidden(el) && hasBox(el));
+        return { found: vis.length > 0, detail: vis.length ? describe(vis[0]) : undefined };
+      }
+      if (args.ref) {
+        const el = elOf(args.ref);
+        return { found: !!el && !isHidden(el) && hasBox(el), detail: el ? describe(el) : undefined };
+      }
+      return { error: 'probe needs text, selector or ref' };
+    }
+
     case 'scrollInfo':
       return { scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight, viewportWidth: w.innerWidth };
 

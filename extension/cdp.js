@@ -5,7 +5,7 @@ const MAX_ENTRIES = 1000;
 function st(tabId) {
   let s = state.get(tabId);
   if (!s) {
-    s = { attached: false, console: [], network: [], netIndex: new Map(), dialogPolicy: 'accept', fileChooser: null };
+    s = { attached: false, console: [], network: [], netIndex: new Map(), dialogPolicy: 'accept', fileChooser: null, inflight: new Map(), lastNet: 0 };
     state.set(tabId, s);
   }
   return s;
@@ -58,6 +58,18 @@ export async function detach(tabId) {
   try { await chrome.debugger.detach({ tabId }); } catch { /* already gone */ }
 }
 
+export function isAttached(tabId) { return !!st(tabId).attached; }
+
+// "Quiet" = no request started or finished in the last quietMs and nothing short-lived still loading.
+// Requests older than 5s (long polling, streams, websockets) are ignored so they never block a wait.
+export function networkQuiet(tabId, quietMs = 400) {
+  const s = st(tabId);
+  const now = Date.now();
+  let young = 0;
+  for (const ts of s.inflight.values()) if (now - ts < 5000) young++;
+  return young === 0 && now - s.lastNet >= quietMs;
+}
+
 export function getConsole(tabId) { return st(tabId).console; }
 export function getNetwork(tabId) { return st(tabId).network; }
 export function clearConsole(tabId) { st(tabId).console = []; }
@@ -94,8 +106,12 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
       const entry = { ts: now, id: params.requestId, method: r.method, url: r.url, type: params.type, status: null };
       push(s.network, entry);
       s.netIndex.set(params.requestId, entry);
+      s.inflight.set(params.requestId, now); s.lastNet = now;
       break;
     }
+    case 'Network.loadingFinished':
+      s.inflight.delete(params.requestId); s.lastNet = now;
+      break;
     case 'Network.responseReceived': {
       const entry = s.netIndex.get(params.requestId);
       if (entry) { entry.status = params.response.status; entry.mime = params.response.mimeType; }
@@ -104,6 +120,7 @@ chrome.debugger.onEvent.addListener((source, method, params) => {
     case 'Network.loadingFailed': {
       const entry = s.netIndex.get(params.requestId);
       if (entry) entry.error = params.errorText;
+      s.inflight.delete(params.requestId); s.lastNet = now;
       break;
     }
     case 'Page.javascriptDialogOpening': {

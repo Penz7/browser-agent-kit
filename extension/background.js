@@ -234,6 +234,17 @@ async function settle(tabId) {
   await sleep(250);
   await waitForLoad(tabId, 10000);
   await sleep(80);
+  // Real mode: give XHR/fetch triggered by the action a moment to finish, so the next read/screenshot sees the result.
+  if (cdp.isAttached(tabId)) await waitNetworkQuiet(tabId, 1500);
+}
+
+async function waitNetworkQuiet(tabId, maxMs, quietMs = 400) {
+  const start = Date.now();
+  while (Date.now() - start < maxMs) {
+    if (cdp.networkQuiet(tabId, quietMs)) return true;
+    await sleep(100);
+  }
+  return cdp.networkQuiet(tabId, quietMs);
 }
 
 // Viewport in CSS px. Prefers the content script (no debugger), falls back to CDP.
@@ -330,6 +341,34 @@ async function hideActivity(tabId) {
   try { await inject(tabId, 'overlay', { state: 'hide' }); } catch { /* ignore */ }
 }
 chrome.tabs.onRemoved.addListener((id) => { clearTimeout(overlayTimers.get(id)); overlayTimers.delete(id); clearTimeout(detachTimers.get(id)); detachTimers.delete(id); });
+
+// ---------- downloads started while the agent works ----------
+async function sessionStart() {
+  const { sessionStart: t } = await chrome.storage.session.get('sessionStart');
+  if (t) return t;
+  const now = new Date().toISOString();
+  await chrome.storage.session.set({ sessionStart: now });
+  return now;
+}
+sessionStart();
+async function listDownloads(limit = 20) {
+  const since = await sessionStart();
+  const items = await chrome.downloads.search({ orderBy: ['-startTime'], limit: Math.max(limit, 1), startedAfter: since });
+  return items.map((i) => ({
+    id: i.id, url: i.finalUrl || i.url, filename: i.filename, state: i.state, paused: i.paused,
+    bytes: i.bytesReceived, totalBytes: i.totalBytes, mime: i.mime, startTime: i.startTime, error: i.error, exists: i.exists
+  }));
+}
+// Downloads created after `since` (ms). Used to tell the agent a click started one.
+async function downloadsSince(since) {
+  try {
+    const items = await chrome.downloads.search({ orderBy: ['-startTime'], limit: 5 });
+    return items.filter((i) => Date.parse(i.startTime) >= since - 50);
+  } catch { return []; }
+}
+const downloadHint = (items) => items.length
+  ? `A download started: ${items.map((i) => i.filename ? i.filename.split(/[\\/]/).pop() : i.url).join(', ')}. Call list_downloads (wait=true) to get the saved path.`
+  : undefined;
 
 // ---------- tab group for agent-created tabs ----------
 const groupByWindow = new Map();
@@ -463,10 +502,12 @@ const handlers = {
       const pre = await resolvePoint(tab.id, p); // scrolls the target into view and tells the cursor where to go
       await cursorTo(tab.id, `Click: ${pre.name || ''}`, pre);
       const args = { ref: p.ref, button, clickCount, modifiers: p.modifiers, ...(p.ref ? {} : { x: pre.x, y: pre.y }) };
+      const started = Date.now();
       const r = await inject(tab.id, 'click', args);
       await settle(tab.id);
       const t = await chrome.tabs.get(tab.id);
-      return { x: r.x, y: r.y, covered: !!r.covered, target: r.name, hint: r.hint, url: t.url, title: t.title };
+      const hint = r.hint || downloadHint(await downloadsSince(started));
+      return { x: r.x, y: r.y, covered: !!r.covered, target: r.name, hint, url: t.url, title: t.title };
     }
     const tab = await prepare(p.tabId);
     const pt = await resolvePoint(tab.id, p);
@@ -481,7 +522,7 @@ const handlers = {
     await settle(tab.id);
     const t = await chrome.tabs.get(tab.id);
     const chooser = cdp.fileChooser(tab.id);
-    const hint = chooser && chooser.ts >= started ? CHOOSER_HINT : undefined;
+    const hint = chooser && chooser.ts >= started ? CHOOSER_HINT : downloadHint(await downloadsSince(started));
     return { x: pt.x, y: pt.y, covered: !!pt.covered, target: pt.name, hint, url: t.url, title: t.title };
   },
 
@@ -653,6 +694,39 @@ const handlers = {
     }
     await settle(tab.id);
     return { uploaded: paths, via: 'input' };
+  },
+
+  async wait_for({ tabId, text, selector, ref, networkIdle, gone, timeout }) {
+    const tab = networkIdle ? await prepare(tabId) : await allowedTab(tabId);
+    const what = text != null ? `text "${text}"` : selector ? `selector ${selector}` : ref ? ref : networkIdle ? 'network idle' : null;
+    if (!what) throw new Error('wait_for needs text, selector, ref or network_idle');
+    showActivity(tab.id, `Chờ: ${what}`);
+    const max = Math.min(Math.max(Number(timeout) || 10000, 500), 60000);
+    const start = Date.now();
+    let detail;
+    while (true) {
+      let found;
+      if (networkIdle) found = cdp.networkQuiet(tab.id, 500);
+      else {
+        let r;
+        try { r = await inject(tab.id, 'probe', { text, selector, ref }); } catch { r = { found: false }; } // mid-navigation
+        found = !!r.found; detail = r.detail;
+      }
+      if (gone ? !found : found) return { ok: true, waited: Date.now() - start, what, detail };
+      if (Date.now() - start >= max) return { ok: false, waited: Date.now() - start, what, detail };
+      await sleep(networkIdle ? 100 : 200);
+    }
+  },
+
+  async 'downloads.list'({ wait, timeout, limit }) {
+    const max = Math.min(Math.max(Number(timeout) || 30000, 1000), 120000);
+    const start = Date.now();
+    let items = await listDownloads(limit);
+    while (wait && items.some((i) => i.state === 'in_progress') && Date.now() - start < max) {
+      await sleep(300);
+      items = await listDownloads(limit);
+    }
+    return { items, waited: Date.now() - start };
   },
 
   async 'window.resize'({ tabId, width, height }) {

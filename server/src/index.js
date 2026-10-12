@@ -287,6 +287,48 @@ def('file_upload', {
   return after(tab, `Attached ${safe.length} file(s)${r && r.via === 'file dialog' ? ' to the file dialog the page opened' : ref ? ` to ${ref}` : ' to the page\'s file input'}.`);
 });
 
+def('wait_for', {
+  title: 'Wait for a condition',
+  description: 'Wait until text appears on the page, an element (CSS selector or ref) is visible, or the network goes quiet. ' +
+    'Use after clicks that load content instead of fixed waits. gone=true waits for the opposite (text/element disappears, e.g. a spinner).',
+  inputSchema: {
+    tabId,
+    text: z.string().optional().describe('Visible text to wait for (case-insensitive substring).'),
+    selector: z.string().optional().describe('CSS selector that must match a visible element.'),
+    ref: z.string().optional().describe('Element ref from read_page/find that must be visible.'),
+    network_idle: z.boolean().optional().describe('true: wait until no request has started or finished for 500ms.'),
+    gone: z.boolean().optional().describe('Wait until the text/element is NOT there.'),
+    timeout: z.number().optional().describe('Milliseconds, default 10000, max 60000.')
+  }
+}, async ({ tabId: tab, text, selector, ref, network_idle, gone, timeout }) => {
+  const r = await bridge.request('wait_for', { tabId: tab, text, selector, ref, networkIdle: network_idle, gone, timeout }, 70000);
+  const msg = r.ok
+    ? `${gone ? 'Gone' : 'Ready'}: ${r.what} after ${r.waited}ms${r.detail ? ` (${r.detail})` : ''}.`
+    : `Timed out after ${r.waited}ms waiting for ${r.what}${gone ? ' to disappear' : ''}. Take a screenshot or read_page to see the current state.`;
+  const res = await after(tab, msg);
+  if (!r.ok) res.isError = true;
+  return res;
+});
+
+def('list_downloads', {
+  title: 'List downloads',
+  description: 'List files downloaded since the kit started working (newest first) with their saved paths. wait=true blocks until in-progress downloads finish.',
+  inputSchema: {
+    wait: z.boolean().optional().describe('Wait for in-progress downloads to complete (default false).'),
+    timeout: z.number().optional().describe('Max milliseconds to wait, default 30000.'),
+    limit: z.number().int().optional().describe('Max entries, default 20.')
+  }
+}, async ({ wait, timeout, limit }) => {
+  const r = await bridge.request('downloads.list', { wait, timeout, limit }, (Number(timeout) || 30000) + 10000);
+  if (!r.items.length) return ok(T('No downloads started during this session.'));
+  const lines = r.items.map((i) => {
+    const size = i.totalBytes > 0 ? `${i.bytes}/${i.totalBytes} bytes` : `${i.bytes} bytes`;
+    const where = i.filename || '(path not decided yet)';
+    return `${i.state}${i.paused ? ' (paused)' : ''}${i.error ? ' ' + i.error : ''}  ${where}  ${size}  ${i.url}`;
+  });
+  return ok(T(lines.join('\n')));
+});
+
 def('resize_window', {
   title: 'Resize window',
   description: 'Resize the Chrome window that contains the tab.',
@@ -301,7 +343,7 @@ def('browser_batch', {
   description: 'Run a sequence of tool calls in order and return one screenshot at the end. Stops at the first error. Saves round trips for simple flows (e.g. fill, click, wait).',
   inputSchema: {
     steps: z.array(z.object({
-      tool: z.enum(['navigate', 'computer', 'read_page', 'find', 'get_page_text', 'form_input', 'javascript_tool', 'file_upload']),
+      tool: z.enum(['navigate', 'computer', 'read_page', 'find', 'get_page_text', 'form_input', 'javascript_tool', 'file_upload', 'wait_for']),
       args: z.record(z.any())
     })).min(1).max(20)
   }
