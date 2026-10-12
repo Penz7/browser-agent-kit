@@ -4,6 +4,7 @@ import * as cdp from './cdp.js';
 import { agentDom } from './dom.js';
 import { parseCombo, parseModifiers, macCommand, MOD } from './keys.js';
 import { parseRef, prefixRef, prefixLines, buildFrameTree, childFrameId, toMainCoords } from './frames.js';
+import { GIFEncoder, quantize, applyPalette } from './vendor/gifenc.js';
 
 const VERSION = chrome.runtime.getManifest().version;
 const DEFAULT_MAX_WIDTH = 1024;
@@ -415,6 +416,64 @@ const downloadHint = (items) => items.length
   ? `A download started: ${items.map((i) => i.filename ? i.filename.split(/[\\/]/).pop() : i.url).join(', ')}. Call list_downloads (wait=true) to get the saved path.`
   : undefined;
 
+// ---------- GIF recording of what the agent does on a tab ----------
+// Frames are grabbed around each action with the overlay (cursor, status bar) visible, so a person can follow along.
+const recordings = new Map(); // tabId -> { frames: [{ data, w, h, ts }], started, width, truncated }
+const REC_MAX_FRAMES = 240;
+async function captureDataUrl(tab) {
+  if (cdp.isAttached(tab.id)) {
+    const shot = await cdp.send(tab.id, 'Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+    return 'data:image/png;base64,' + shot.data;
+  }
+  const now = await chrome.tabs.get(tab.id);
+  if (!now.active) throw new Error('tab not visible');
+  for (let attempt = 0; ; attempt++) {
+    try { return await chrome.tabs.captureVisibleTab(tab.windowId, { format: 'png' }); }
+    catch (e) { if (attempt < 3 && /MAX_CAPTURE|exceeded|rate/i.test(e.message || '')) { await sleep(600); continue; } throw e; }
+  }
+}
+async function recordFrame(tabId) {
+  const rec = recordings.get(tabId);
+  if (!rec || rec.frames.length >= REC_MAX_FRAMES) { if (rec) rec.truncated = true; return; }
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const bmp = await createImageBitmap(await (await fetch(await captureDataUrl(tab))).blob());
+    const scale = Math.min(1, rec.width / bmp.width);
+    const w = Math.max(1, Math.round(bmp.width * scale)), h = Math.max(1, Math.round(bmp.height * scale));
+    const canvas = new OffscreenCanvas(w, h);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bmp, 0, 0, w, h);
+    bmp.close();
+    rec.frames.push({ data: ctx.getImageData(0, 0, w, h).data, w, h, ts: Date.now() });
+  } catch { /* tab hidden or page not capturable: skip this frame */ }
+}
+function encodeGif(rec) {
+  const gif = GIFEncoder();
+  const w = Math.max(...rec.frames.map((f) => f.w)), h = Math.max(...rec.frames.map((f) => f.h));
+  rec.frames.forEach((f, i) => {
+    let data = f.data;
+    if (f.w !== w || f.h !== h) { // pad smaller frames (window resized mid-recording)
+      const padded = new Uint8ClampedArray(w * h * 4);
+      for (let y = 0; y < f.h; y++) padded.set(f.data.subarray(y * f.w * 4, (y + 1) * f.w * 4), y * w * 4);
+      data = padded;
+    }
+    const palette = quantize(data, 256, { format: 'rgb444' });
+    const index = applyPalette(data, palette, 'rgb444');
+    const next = rec.frames[i + 1];
+    const delay = next ? Math.min(2000, Math.max(250, next.ts - f.ts)) : 1500;
+    gif.writeFrame(index, w, h, { palette, delay, first: i === 0, repeat: 0 });
+  });
+  gif.finish();
+  return { bytes: gif.bytes(), w, h };
+}
+function bytesToBase64(bytes) {
+  let s = '';
+  const CH = 0x8000;
+  for (let i = 0; i < bytes.length; i += CH) s += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
+  return btoa(s);
+}
+chrome.tabs.onRemoved.addListener((id) => recordings.delete(id));
+
 // ---------- tab group for agent-created tabs ----------
 const groupByWindow = new Map();
 async function addToAgentGroup(tab) {
@@ -483,6 +542,7 @@ const handlers = {
     }
     await sleep(200);
     showActivity(tab.id, 'Đang xem trang');
+    await recordFrame(tab.id);
     return tabInfo(await chrome.tabs.get(tab.id));
   },
 
@@ -555,6 +615,7 @@ const handlers = {
       const tab = await prepareLite(p.tabId);
       const pre = await resolvePoint(tab.id, p); // scrolls the target into view and tells the cursor where to go
       await cursorTo(tab.id, `Click: ${pre.name || ''}`, pre);
+      await recordFrame(tab.id);
       const started = Date.now();
       let r;
       if (ref) {
@@ -574,6 +635,7 @@ const handlers = {
         r = { ...r, x: pre.x, y: pre.y };
       }
       await settle(tab.id);
+      await recordFrame(tab.id);
       const t = await chrome.tabs.get(tab.id);
       const hint = r.hint || downloadHint(await downloadsSince(started));
       return { x: r.x, y: r.y, covered: !!r.covered, target: r.name, hint, url: t.url, title: t.title };
@@ -583,12 +645,14 @@ const handlers = {
     const modifiers = p.modifiers ? parseModifiers(p.modifiers) : 0;
     const started = Date.now();
     await cursorTo(tab.id, `Click: ${pt.name || ''}`, pt);
+    await recordFrame(tab.id);
     await mouse(tab.id, 'mouseMoved', pt.x, pt.y, { modifiers });
     for (let i = 1; i <= clickCount; i++) {
       await mouse(tab.id, 'mousePressed', pt.x, pt.y, { button, clickCount: i, modifiers });
       await mouse(tab.id, 'mouseReleased', pt.x, pt.y, { button, clickCount: i, modifiers });
     }
     await settle(tab.id);
+    await recordFrame(tab.id);
     const t = await chrome.tabs.get(tab.id);
     const chooser = cdp.fileChooser(tab.id);
     const hint = chooser && chooser.ts >= started ? CHOOSER_HINT : downloadHint(await downloadsSince(started));
@@ -619,6 +683,7 @@ const handlers = {
     }
     await mouse(tab.id, 'mouseReleased', b.x, b.y, { button: 'left', clickCount: 1 });
     await settle(tab.id);
+    await recordFrame(tab.id);
     return { from: a, to: b };
   },
 
@@ -629,6 +694,7 @@ const handlers = {
       if (!r.fallback) {
         showActivity(tab.id, `Gõ vào: ${r.into || ''}`);
         await settle(tab.id);
+        await recordFrame(tab.id);
         return { typed: r.typed, into: r.into, via: 'dom' };
       }
       // Nothing editable is focused: fall back to real key events.
@@ -637,6 +703,7 @@ const handlers = {
     showActivity(tab.id, 'Gõ phím');
     await typeViaCdp(tab.id, text);
     await settle(tab.id);
+    await recordFrame(tab.id);
     return { typed: String(text).length, via: 'cdp' };
   },
 
@@ -646,6 +713,7 @@ const handlers = {
     const combos = String(combo).trim().split(/\s+/);
     for (let i = 0; i < (repeat || 1); i++) for (const c of combos) await pressKey(tab.id, parseCombo(c));
     await settle(tab.id);
+    await recordFrame(tab.id);
     return { pressed: combo };
   },
 
@@ -664,6 +732,7 @@ const handlers = {
         ? await inject(tab.id, 'scroll', { ref, dx, dy }, frameId)
         : await inject(tab.id, 'scroll', { x: pt.x, y: pt.y, dx, dy }); // animated inside the page
       await sleep(120);
+      await recordFrame(tab.id);
       return r;
     }
     const tab = await prepare(p.tabId);
@@ -679,6 +748,7 @@ const handlers = {
       await sleep(20);
     }
     await sleep(250);
+    await recordFrame(tab.id);
     return inject(tab.id, 'scrollInfo', {});
   },
 
@@ -758,6 +828,7 @@ const handlers = {
       items.forEach((x, k) => { results[x.i] = { ...r.results[k], ref: fields[x.i].ref }; });
     }
     await settle(tab.id);
+    await recordFrame(tab.id);
     return { results };
   },
 
@@ -860,6 +931,29 @@ const handlers = {
       items = await listDownloads(limit);
     }
     return { items, waited: Date.now() - start };
+  },
+
+  async 'gif.start'({ tabId, maxWidth }) {
+    const tab = await allowedTab(tabId);
+    recordings.set(tab.id, { frames: [], started: Date.now(), width: Math.min(Math.max(Number(maxWidth) || 640, 200), 1280), truncated: false });
+    showActivity(tab.id, 'Đang ghi hình');
+    await recordFrame(tab.id);
+    return { recording: true, tabId: tab.id };
+  },
+
+  async 'gif.status'({ tabId }) {
+    const rec = recordings.get(Number(tabId));
+    return rec ? { recording: true, frames: rec.frames.length, seconds: Math.round((Date.now() - rec.started) / 1000), truncated: rec.truncated } : { recording: false };
+  },
+
+  async 'gif.stop'({ tabId }) {
+    const rec = recordings.get(Number(tabId));
+    if (!rec) throw new Error('No recording is running on this tab. Call gif_recorder with action "start" first.');
+    await recordFrame(Number(tabId));
+    recordings.delete(Number(tabId));
+    if (!rec.frames.length) throw new Error('Nothing was captured (the tab was never visible). Keep the tab in front while recording.');
+    const { bytes, w, h } = encodeGif(rec);
+    return { data: bytesToBase64(bytes), frames: rec.frames.length, width: w, height: h, seconds: Math.round((Date.now() - rec.started) / 1000), truncated: rec.truncated };
   },
 
   async 'window.resize'({ tabId, width, height }) {

@@ -19,6 +19,7 @@ const cfg = {
   extensionId: process.env.BROWSER_KIT_EXTENSION_ID || '',
   // When the extension is idle, open http://127.0.0.1:<port>/wake in Chrome so it reconnects at once (the tab closes itself).
   wake: process.env.BROWSER_KIT_WAKE !== '0',
+  gifDir: process.env.BROWSER_KIT_GIF_DIR || path.join(os.homedir(), 'Downloads', 'browser-agent-kit'),
   browser: process.env.BROWSER_KIT_BROWSER || '',
   // Local files the agent may hand to a web page. Dot-directories (~/.ssh, ~/.aws, ~/.gemini...) are always refused.
   uploadRoots: (process.env.BROWSER_KIT_UPLOAD_ROOTS || [os.homedir(), os.tmpdir(), '/tmp'].join(path.delimiter))
@@ -328,6 +329,31 @@ def('list_downloads', {
     return `${i.state}${i.paused ? ' (paused)' : ''}${i.error ? ' ' + i.error : ''}  ${where}  ${size}  ${i.url}`;
   });
   return ok(T(lines.join('\n')));
+});
+
+def('gif_recorder', {
+  title: 'Record a GIF',
+  description: 'Record what happens on a tab as an animated GIF for the user to review: start, do the task, then stop. ' +
+    'Frames are captured around every action with the kit\'s cursor and status bar visible. stop writes the file and returns its path.',
+  inputSchema: {
+    action: z.enum(['start', 'stop', 'status']),
+    tabId,
+    name: z.string().optional().describe('File name for stop, e.g. "checkout_flow" (".gif" is added). Default: recording-<timestamp>.'),
+    maxWidth: z.number().int().optional().describe('Frame width in px for start, default 640 (smaller = lighter file).')
+  }
+}, async ({ action, tabId: tab, name, maxWidth }) => {
+  if (action === 'start') { await bridge.request('gif.start', { tabId: tab, maxWidth }, 30000); return ok(T(`Recording tab ${tab}. Keep it in front; call gif_recorder stop when done.`)); }
+  if (action === 'status') {
+    const r = await bridge.request('gif.status', { tabId: tab }, 15000);
+    return ok(T(r.recording ? `Recording: ${r.frames} frames over ${r.seconds}s${r.truncated ? ' (frame cap reached)' : ''}.` : 'Not recording.'));
+  }
+  const r = await bridge.request('gif.stop', { tabId: tab }, 120000);
+  const base = String(name || `recording-${new Date().toISOString().replace(/[:.]/g, '-')}`).replace(/\.gif$/i, '').replace(/[^\w.-]+/g, '_').slice(0, 80) || 'recording';
+  fs.mkdirSync(cfg.gifDir, { recursive: true });
+  const file = path.join(cfg.gifDir, base + '.gif');
+  const bytes = Buffer.from(r.data, 'base64');
+  fs.writeFileSync(file, bytes);
+  return ok(T(`Saved ${file} (${r.frames} frames, ${r.width}x${r.height}, ${r.seconds}s, ${Math.round(bytes.length / 1024)} KB)${r.truncated ? '. The frame cap was reached, so the end of the session is missing' : ''}.`));
 });
 
 def('resize_window', {

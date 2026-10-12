@@ -34,7 +34,9 @@ function fakeExtension(port = PORT) {
           evaluate: { type: 'object', value: { a: 1 } },
           type: { typed: 3, into: 'Email', via: 'dom' },
           wait_for: { ok: msg.params.text !== 'never', waited: 12, what: `text "${msg.params.text}"` },
-          'downloads.list': { items: [{ state: 'complete', filename: '/tmp/report.pdf', bytes: 10, totalBytes: 10, url: 'https://example.com/report.pdf' }], waited: 0 }
+          'downloads.list': { items: [{ state: 'complete', filename: '/tmp/report.pdf', bytes: 10, totalBytes: 10, url: 'https://example.com/report.pdf' }], waited: 0 },
+          'gif.start': { recording: true, tabId: 7 },
+          'gif.stop': { data: Buffer.from('GIF89a\u0001\u0000\u0001\u0000\u0000\u0000\u0000;', 'latin1').toString('base64'), frames: 3, width: 1, height: 1, seconds: 2, truncated: false }
         };
         if (msg.method === 'navigate' && msg.params.url === 'chrome://bad') return ws.send(JSON.stringify({ id: msg.id, ok: false, error: 'Site not allowed: chrome://bad' }));
         if (msg.method === 'navigate') return ws.send(JSON.stringify({ id: msg.id, ok: true, result: { tabId: msg.params.tabId, ...page } }));
@@ -49,7 +51,10 @@ function fakeExtension(port = PORT) {
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 
-const env = { ...process.env, BROWSER_KIT_PORT: String(PORT), BROWSER_KIT_TOKEN: 'secret', BROWSER_KIT_WAKE: '0' };
+import fs from 'node:fs';
+import os from 'node:os';
+const GIF_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'bak-gif-'));
+const env = { ...process.env, BROWSER_KIT_PORT: String(PORT), BROWSER_KIT_TOKEN: 'secret', BROWSER_KIT_WAKE: '0', BROWSER_KIT_GIF_DIR: GIF_DIR };
 const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(here, '..', 'src', 'index.js')], env });
 const client = new Client({ name: 'smoke', version: '0.0.0' });
 await client.connect(transport);
@@ -111,6 +116,11 @@ r = await client.callTool({ name: 'wait_for', arguments: { tabId: 7, text: 'Welc
 assert(!r.isError && /Ready: text "Welcome"/.test(r.content[0].text), 'wait_for reports the condition that was met');
 r = await client.callTool({ name: 'wait_for', arguments: { tabId: 7, text: 'never', timeout: 500 } });
 assert(r.isError && /Timed out/.test(r.content[0].text), 'wait_for times out with an error the agent can act on');
+r = await client.callTool({ name: 'gif_recorder', arguments: { action: 'start', tabId: 7 } });
+assert(!r.isError && /Recording tab 7/.test(r.content[0].text), 'gif_recorder start');
+r = await client.callTool({ name: 'gif_recorder', arguments: { action: 'stop', tabId: 7, name: 'my flow.gif' } });
+const gifPath = path.join(GIF_DIR, 'my_flow.gif');
+assert(!r.isError && r.content[0].text.includes(gifPath) && fs.readFileSync(gifPath, 'latin1').startsWith('GIF89a'), 'gif_recorder stop writes the GIF file and reports its path');
 r = await client.callTool({ name: 'list_downloads', arguments: {} });
 assert(!r.isError && /complete\s+\/tmp\/report\.pdf/.test(r.content[0].text), 'list_downloads lists saved paths');
 

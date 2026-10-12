@@ -4,6 +4,7 @@ import { agentDom } from '../../extension/dom.js';
 import { parseCombo, parseModifiers, macCommand, MOD } from '../../extension/keys.js';
 import { hostAllowed } from '../../extension/settings.js';
 import { parseRef, prefixRef, prefixLines, buildFrameTree, childFrameId, toMainCoords } from '../../extension/frames.js';
+import { GIFEncoder, quantize, applyPalette } from '../../extension/vendor/gifenc.js';
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 
@@ -152,6 +153,20 @@ const plainRef = /\[(ref_\d+)\] button "Plain"/.exec(upText)[1];
 assert(agentDom('uploadLike', { ref: upRef }).upload === true, 'uploadLike recognises an upload button next to a file input');
 assert(agentDom('uploadLike', { ref: plainRef }).upload === false, 'uploadLike ignores ordinary buttons');
 document.getElementById('up').remove(); document.getElementById('plain').remove();
+
+// vendored gif encoder: the exact calls background.js makes
+{
+  const w = 4, h = 3, px = new Uint8ClampedArray(w * h * 4);
+  for (let i = 0; i < px.length; i += 4) { px[i] = i % 255; px[i + 1] = 100; px[i + 2] = 200; px[i + 3] = 255; }
+  const gif = GIFEncoder();
+  for (let i = 0; i < 2; i++) {
+    const palette = quantize(px, 256, { format: 'rgb444' });
+    gif.writeFrame(applyPalette(px, palette, 'rgb444'), w, h, { palette, delay: 300, first: i === 0, repeat: 0 });
+  }
+  gif.finish();
+  const bytes = gif.bytes();
+  assert(String.fromCharCode(...bytes.subarray(0, 6)) === 'GIF89a' && bytes[bytes.length - 1] === 0x3b, 'gifenc produces a GIF89a stream from RGBA frames');
+}
 
 // probe (wait_for)
 assert(agentDom('probe', { text: 'sign IN' }).found === true, 'probe finds visible text case-insensitively');

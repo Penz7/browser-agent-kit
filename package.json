@@ -3,15 +3,29 @@
   "version": "0.1.0",
   "description": "Let any AI agent (Codex, Claude Code, Antigravity, Cursor, Cline/DeepSeek...) control your real Chrome through MCP, the way Claude in Chrome does.",
   "type": "module",
-  "bin": { "browser-agent-kit": "bin/cli.js" },
-  "files": ["bin", "server/src", "extension", "skill", "configs", "README.md"],
+  "bin": {
+    "browser-agent-kit": "bin/cli.js"
+  },
+  "files": [
+    "bin",
+    "server/src",
+    "extension",
+    "skill",
+    "configs",
+    "README.md"
+  ],
   "scripts": {
     "start": "node server/src/index.js",
     "setup": "node bin/cli.js setup",
     "test": "node server/test/dom.test.mjs && node server/test/smoke.mjs"
   },
-  "engines": { "node": ">=18" },
-  "repository": { "type": "git", "url": "https://github.com/Penz7/browser-agent-kit.git" },
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Penz7/browser-agent-kit.git"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.17.0",
     "ws": "^8.18.0",
