@@ -1,0 +1,96 @@
+// Unit tests for the injected DOM function and key mapping, run under jsdom.
+import { JSDOM } from 'jsdom';
+import { agentDom } from '../../extension/dom.js';
+import { parseCombo, parseModifiers, macCommand, MOD } from '../../extension/keys.js';
+
+function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
+
+const dom = new JSDOM(`<!doctype html><html><head><title>T</title></head><body>
+  <nav><a href="/home">Home</a><a href="/about" aria-label="About us">x</a></nav>
+  <h1>Welcome</h1>
+  <p>Intro text <b>bold</b></p>
+  <form>
+    <label for="email">Email</label><input id="email" type="text">
+    <input type="password" placeholder="Password">
+    <select id="country"><option value="vn">Vietnam</option><option value="us">United States</option></select>
+    <input type="checkbox" id="agree"><label for="agree">I agree</label>
+    <div contenteditable="true" id="note"></div>
+    <button type="submit">Sign in</button>
+  </form>
+  <div style="display:none"><button>Hidden</button></div>
+  <script>var x=1</script>
+</body></html>`, { url: 'https://example.com/login', pretendToBeVisual: true });
+
+global.window = dom.window;
+global.document = dom.window.document;
+global.getComputedStyle = dom.window.getComputedStyle;
+global.HTMLTextAreaElement = dom.window.HTMLTextAreaElement;
+global.HTMLSelectElement = dom.window.HTMLSelectElement;
+global.HTMLInputElement = dom.window.HTMLInputElement;
+global.InputEvent = dom.window.InputEvent || dom.window.Event;
+global.Event = dom.window.Event;
+global.location = dom.window.location;
+// jsdom has no layout: pretend every element is a 100x20 box at (10,10) and innerText = textContent.
+dom.window.Element.prototype.getBoundingClientRect = function () { return { left: 10, top: 10, right: 110, bottom: 30, width: 100, height: 20 }; };
+dom.window.Element.prototype.scrollIntoView = function () {};
+dom.window.document.elementFromPoint = () => null;
+Object.defineProperty(dom.window.HTMLElement.prototype, 'innerText', { get() { return this.textContent; }, configurable: true });
+
+const snap = agentDom('snapshot', { mode: 'full' });
+const text = snap.lines.join('\n');
+assert(snap.title === 'T' && snap.url === 'https://example.com/login', 'snapshot reports url and title');
+assert(text.includes('link "Home"'), 'links get a ref and name');
+assert(text.includes('link "About us"'), 'aria-label wins over inner text');
+assert(text.includes('h1 "Welcome"'), 'headings are listed in full mode');
+assert(text.includes('textbox "Email"'), 'input is named by its <label for>');
+assert(text.includes('textbox "Password" type=password'), 'password placeholder used as name, no value shown');
+assert(text.includes('combobox "Country"') || text.includes('combobox "country"') || /combobox "/.test(text), 'select appears as combobox');
+assert(text.includes('checkbox "I agree" unchecked'), 'checkbox reports checked state');
+assert(text.includes('button "Sign in"'), 'submit button listed');
+assert(!text.includes('Hidden'), 'display:none subtree is skipped');
+assert(!text.includes('var x'), 'script content is skipped');
+
+const inter = agentDom('snapshot', { mode: 'interactive' });
+assert(inter.lines.every((l) => l.trim().startsWith('[ref_')), 'interactive mode lists only ref lines');
+
+const found = agentDom('find', { query: 'sign in button' });
+assert(found.matches.length && found.matches[0].line.includes('button "Sign in"'), 'find ranks the sign-in button first');
+
+const signRef = found.matches[0].line.match(/\[(ref_\d+)\]/)[1];
+const res = agentDom('resolve', { ref: signRef });
+assert(res.x === 60 && res.y === 20 && res.tag === 'button', 'resolve returns element center');
+assert(agentDom('resolve', { ref: 'ref_999' }).error.includes('not found'), 'resolve on unknown ref gives a helpful error');
+
+const refOf = (needle) => text.split('\n').find((l) => l.includes(needle)).match(/\[(ref_\d+)\]/)[1];
+let inputEvents = 0;
+document.getElementById('email').addEventListener('input', () => inputEvents++);
+const fi = agentDom('formInput', { fields: [
+  { ref: refOf('textbox "Email"'), value: 'a@b.c' },
+  { ref: refOf('combobox'), value: 'United States' },
+  { ref: refOf('checkbox'), value: true },
+  { ref: signRef, value: 'nope' }
+] });
+assert(document.getElementById('email').value === 'a@b.c' && inputEvents === 1, 'formInput sets text value and fires input event');
+assert(document.getElementById('country').value === 'us', 'formInput selects option by label');
+assert(document.getElementById('agree').checked === true, 'formInput checks checkbox');
+assert(fi.results[3].error && fi.results[3].error.includes('not a form control'), 'formInput reports non-form targets');
+
+const pt = agentDom('text', { offset: 0, limit: 7 });
+assert(pt.text.length === 7 && pt.total > 7, 'text supports offset/limit');
+
+// keys
+let k = parseCombo('ctrl+shift+t');
+assert(k.modifiers === (MOD.ctrl | MOD.shift) && k.key.code === 'KeyT', 'parseCombo handles ctrl+shift+t');
+k = parseCombo('Return');
+assert(k.key.key === 'Enter' && k.key.text === '\r', 'Return maps to Enter');
+k = parseCombo('cmd+a');
+assert(k.modifiers === MOD.meta && macCommand(k.modifiers, k.key)[0] === 'selectAll', 'cmd+a yields selectAll command for macOS');
+k = parseCombo('?');
+assert(k.modifiers === MOD.shift && k.key.code === 'Slash' && k.key.text === '?', 'shifted punctuation implies shift');
+k = parseCombo('shift+a');
+assert(k.key.text === 'A', 'shift+a types uppercase A');
+assert(parseModifiers('ctrl+shift') === (MOD.ctrl | MOD.shift), 'parseModifiers');
+let threw = false; try { parseCombo('banana'); } catch { threw = true; }
+assert(threw, 'unknown key names throw');
+
+console.log('\nAll DOM/key tests passed.');

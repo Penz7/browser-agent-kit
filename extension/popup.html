@@ -1,0 +1,27 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  body { font: 13px system-ui, sans-serif; width: 280px; margin: 0; padding: 12px; color: #222; }
+  h1 { font-size: 14px; margin: 0 0 8px; }
+  .row { margin: 8px 0; }
+  .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: #c33; }
+  .dot.on { background: #2a2; }
+  button { width: 100%; padding: 6px; margin-top: 4px; cursor: pointer; }
+  .host { font-family: monospace; word-break: break-all; color: #555; }
+  a { color: #06c; }
+</style>
+</head>
+<body>
+  <h1>Browser Agent Kit</h1>
+  <div class="row"><span id="dot" class="dot"></span><span id="status">Checking…</span></div>
+  <div class="row">Current site: <div id="host" class="host">…</div></div>
+  <button id="allowSite">Allow this site</button>
+  <button id="removeSite" style="display:none">Remove this site</button>
+  <div class="row"><label><input type="checkbox" id="allowAll"> Allow all sites</label></div>
+  <button id="reconnect">Reconnect to server</button>
+  <div class="row"><a href="#" id="options">Settings…</a></div>
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

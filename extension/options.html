@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Browser Agent Kit settings</title>
+<style>
+  body { font: 14px system-ui, sans-serif; max-width: 560px; margin: 32px auto; color: #222; }
+  label { display: block; margin: 14px 0 4px; font-weight: 600; }
+  input[type=text], input[type=number], textarea, select { width: 100%; padding: 6px; box-sizing: border-box; font: inherit; }
+  textarea { height: 120px; font-family: monospace; }
+  .hint { color: #666; font-size: 12px; margin-top: 2px; }
+  button { margin-top: 18px; padding: 8px 16px; cursor: pointer; }
+  #saved { color: #2a2; margin-left: 10px; }
+</style>
+</head>
+<body>
+  <h1>Browser Agent Kit</h1>
+  <label for="port">MCP server port</label>
+  <input type="number" id="port" min="1024" max="65535">
+  <div class="hint">Must match BROWSER_KIT_PORT of the MCP server (default 7851).</div>
+
+  <label for="token">Shared token (optional)</label>
+  <input type="text" id="token" placeholder="leave empty to disable">
+  <div class="hint">If set, the MCP server must be started with the same BROWSER_KIT_TOKEN.</div>
+
+  <label><input type="checkbox" id="allowAll"> Allow all sites</label>
+
+  <label for="sites">Allowed sites (one per line)</label>
+  <textarea id="sites" placeholder="example.com&#10;*.google.com&#10;localhost"></textarea>
+  <div class="hint">"example.com" also matches its subdomains. "*" allows everything.</div>
+
+  <label for="dialog">JavaScript dialogs (alert / confirm / prompt)</label>
+  <select id="dialog">
+    <option value="accept">Auto-accept (OK)</option>
+    <option value="dismiss">Auto-dismiss (Cancel)</option>
+  </select>
+  <div class="hint">Dialogs block all browser events, so the kit always closes them automatically.</div>
+
+  <button id="save">Save</button><span id="saved"></span>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+# Codex CLI: append to ~/.codex/config.toml
+[mcp_servers.browser]
+command = "node"
+args = ["~/.browser-agent-kit/server/src/index.js"]
+
+[mcp_servers.browser.env]
+BROWSER_KIT_PORT = "7851"
+# BROWSER_KIT_TOKEN = "same-token-as-in-extension-settings"

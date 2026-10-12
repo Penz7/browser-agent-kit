@@ -1,0 +1,12 @@
+{
+  "_comment": "Generic mcpServers JSON. Works for Antigravity, Cursor, Cline, Roo Code, Windsurf, Gemini CLI, OpenCode (adapt the wrapper key if the client uses a different one).",
+  "mcpServers": {
+    "browser": {
+      "command": "node",
+      "args": ["~/.browser-agent-kit/server/src/index.js"],
+      "env": {
+        "BROWSER_KIT_PORT": "7851"
+      }
+    }
+  }
+}
