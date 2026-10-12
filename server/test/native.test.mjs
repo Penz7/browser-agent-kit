@@ -5,6 +5,8 @@ import path from 'node:path';
 import net from 'node:net';
 import { encode, decode } from '../src/native-host.js';
 import { extensionIdForPath } from '../src/extension-id.js';
+import { zipBuffer, crc32 } from '../src/zip.js';
+import zlib from 'node:zlib';
 
 function assert(cond, msg) { if (!cond) { console.error('FAIL:', msg); process.exit(1); } console.log('ok -', msg); }
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -17,6 +19,17 @@ assert(decode(two).messages.length === 2, 'decode returns both frames once compl
 // Known vector: this folder's id as shown by chrome://extensions on the author's machine.
 assert(extensionIdForPath('/Users/penz/Documents/workspace/browser-agent-kit/extension', 'darwin') === 'fkcdoedmadkdlkeijjnjoimodillfafh', 'extension id derivation matches Chrome for an unpacked folder');
 assert(/^[a-p]{32}$/.test(extensionIdForPath('C:\\Users\\Me\\kit\\extension', 'win32')), 'windows ids use the a-p alphabet');
+
+// zip writer: header signatures, CRC, and a deflated entry that inflates back
+{
+  const text = Buffer.from('hello hello hello hello hello zip'.repeat(20));
+  const z = zipBuffer([{ name: 'a/b.txt', data: text }, { name: 'c.bin', data: Buffer.from([1, 2, 3]) }]);
+  assert(z.readUInt32LE(0) === 0x04034b50 && z.readUInt32LE(z.length - 22) === 0x06054b50 && z.readUInt16LE(z.length - 22 + 10) === 2, 'zip has local header, end record and 2 entries');
+  assert(crc32(Buffer.from('123456789')) === 0xcbf43926, 'crc32 matches the reference vector');
+  const compLen = z.readUInt32LE(18), nameLen = z.readUInt16LE(26);
+  const inflated = zlib.inflateRawSync(z.subarray(30 + nameLen, 30 + nameLen + compLen));
+  assert(z.readUInt16LE(8) === 8 && inflated.equals(text), 'deflated entry inflates to the original bytes');
+}
 
 const PORT = 7800 + Math.floor(Math.random() * 100);
 const host = spawn(process.execPath, [path.join(here, '..', 'src', 'native-host.js')], { stdio: ['pipe', 'pipe', 'inherit'] });

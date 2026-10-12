@@ -5,6 +5,7 @@
 //   browser-agent-kit extension       -> print the extension folder to load in chrome://extensions
 //   browser-agent-kit doctor          -> check whether the Chrome extension is connected
 //   browser-agent-kit native          -> register the native messaging host (silent server detection)
+//   browser-agent-kit pack [outDir]   -> zip the extension for the Chrome Web Store / self-hosting
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -388,10 +389,24 @@ switch (cmd) {
   case 'extension':
     console.log(EXTENSION);
     break;
+  case 'pack': {
+    // Build the Chrome Web Store / self-hosting zip of the extension folder.
+    const { zipDir } = await import(path.join(ROOT, 'server', 'src', 'zip.js'));
+    const manifest = JSON.parse(fs.readFileSync(path.join(EXTENSION, 'manifest.json'), 'utf8'));
+    const outDir = path.resolve(rest.find((a) => !a.startsWith('--')) || path.join(ROOT, 'dist'));
+    fs.mkdirSync(outDir, { recursive: true });
+    const out = path.join(outDir, `browser-agent-kit-extension-${manifest.version}.zip`);
+    const zip = zipDir(EXTENSION, { exclude: (rel, name) => name === '.DS_Store' || name.endsWith('.map') });
+    fs.writeFileSync(out, zip);
+    console.log(`Wrote ${out} (${Math.round(zip.length / 1024)} KB, version ${manifest.version}).`);
+    console.log('Upload it at https://chrome.google.com/webstore/devconsole (see docs/publishing.md). A store-installed copy gets a new extension id:');
+    console.log('  re-run "browser-agent-kit native --extension-id <new id>" and, if you pinned BROWSER_KIT_EXTENSION_ID, update it.');
+    break;
+  }
   case 'doctor':
     await doctor();
     break;
   default:
-    console.log('Unknown command. Use: serve | setup [agent…] | remove [agent…] | native [--extension-id ID | --remove] | extension | doctor');
+    console.log('Unknown command. Use: serve | setup [agent…] | remove [agent…] | native [--extension-id ID | --remove] | extension | pack [outDir] | doctor');
     process.exit(1);
 }

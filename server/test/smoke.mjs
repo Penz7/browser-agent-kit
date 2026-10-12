@@ -126,7 +126,7 @@ assert(!r.isError && /complete\s+\/tmp\/report\.pdf/.test(r.content[0].text), 'l
 
 r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: [path.join(process.env.HOME || '/', '.ssh', 'id_rsa')] } });
 assert(r.isError && /hidden files|not found/i.test(r.content[0].text), 'file_upload refuses dot-directories');
-r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: ['/etc/passwd'] } });
+r = await client.callTool({ name: 'file_upload', arguments: { tabId: 7, ref: 'ref_1', paths: [process.platform === 'win32' ? 'C:\\Windows\\win.ini' : '/etc/passwd'] } });
 assert(r.isError && /outside the allowed folders/.test(r.content[0].text), 'file_upload refuses files outside allowed roots');
 
 // Second server process on the same port must relay through the first (leaf mode).

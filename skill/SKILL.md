@@ -8,7 +8,7 @@ description: Control the user's real Chrome (logged-in sessions included) throug
 You have MCP tools that drive the user's own Chrome through an extension. The tool names mirror
 Claude in Chrome: `tabs_context`, `tabs_create`, `tabs_close`, `navigate`, `computer`, `read_page`,
 `find`, `get_page_text`, `form_input`, `javascript_tool`, `read_console_messages`,
-`read_network_requests`, `file_upload`, `resize_window`, `browser_batch`.
+`read_network_requests`, `file_upload`, `wait_for`, `list_downloads`, `gif_recorder`, `resize_window`, `browser_batch`.
 
 ## Session start
 
@@ -22,6 +22,9 @@ Claude in Chrome: `tabs_context`, `tabs_create`, `tabs_close`, `navigate`, `comp
   Each interactive element comes back with a ref like `ref_12`.
 - Take a `computer` `screenshot` when layout matters (canvas, charts, visual verification, iframes).
 - Refs reset after navigation. If a tool says a ref is missing, call `read_page` again.
+- Iframes are listed inline by `read_page`/`find`; their refs look like `f12_ref_3` and work with every tool.
+- After an action that loads content, use `wait_for` (text, selector, ref or `network_idle`) instead of
+  `computer` `wait` with a guessed duration. `gone=true` waits for a spinner or modal to disappear.
 
 ## Act
 
@@ -31,6 +34,10 @@ Claude in Chrome: `tabs_context`, `tabs_create`, `tabs_close`, `navigate`, `comp
 - Upload files: click the upload button, then call `file_upload` with the paths. The OS file dialog is
   intercepted, never shown, and `file_upload` fills it (no ref needed). You can also skip the click and
   pass the ref of the `<input type=file>` or the upload area.
+- Downloads: a click result says when a download started. `list_downloads` with `wait: true` returns the
+  saved path to report to the user.
+- Recording: when the user wants to review what you did, `gif_recorder` `start` on the tab before the task
+  and `stop` after; tell the user the file path it returns.
   Use `computer` `type` for inputs that need real key events (autocomplete, editors).
 - Keys: `computer` `action: "key"`, `text: "Enter"` / `"ctrl+a"` / `"cmd+shift+t"`.
 - Scroll: `computer` `action: "scroll"`, `scroll_direction`, `scroll_amount` (ticks of 100px), optional `ref`.

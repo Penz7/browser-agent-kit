@@ -143,13 +143,16 @@ Tên tool giống Claude in Chrome nên prompt và skill viết cho Claude dùng
 | `tabs_context` · `tabs_create` · `tabs_close` | liệt kê, mở (vào group Agent), đóng tab |
 | `navigate` | tới URL, `back`, `forward`, chờ load xong |
 | `computer` | `screenshot`, `left/right/middle/double/triple_click`, `left_click_drag`, `mouse_move`, `type`, `key`, `scroll`, `wait`, `zoom`. Click theo `ref` hoặc `coordinate` |
-| `read_page` | cây trang rút gọn, mỗi phần tử tương tác có `ref_N` |
+| `read_page` | cây trang rút gọn, mỗi phần tử tương tác có `ref_N`; iframe (kể cả cross-origin) được liệt kê ngay trong trang với ref dạng `f12_ref_3` |
 | `find` | tìm phần tử theo mô tả tự nhiên, trả về ref |
 | `get_page_text` | text toàn trang, phân trang bằng `offset` |
 | `form_input` | điền nhiều ô một lượt, bắn đúng event cho React / Vue |
 | `javascript_tool` | chạy JS trong trang qua CDP, không bị CSP chặn |
 | `read_console_messages` · `read_network_requests` | debug trang |
 | `file_upload` | gắn file local. Click nút Upload không bao giờ hiện hộp thoại chọn file của hệ điều hành: kit chặn nó và `file_upload` điền vào (không cần ref); nếu không thì truyền ref của `<input type=file>` hoặc nút upload |
+| `wait_for` | chờ text, CSS selector, ref hoặc network im lặng (`gone=true` để chờ spinner biến mất) thay vì ngủ cố định |
+| `list_downloads` | file đã tải về trong phiên kèm đường dẫn; `wait=true` chờ tải xong |
+| `gif_recorder` | `start` / `stop` / `status`: ghi tab thành ảnh GIF động (có con trỏ và thanh trạng thái) và trả đường dẫn file |
 | `resize_window` | đổi kích thước cửa sổ |
 | `browser_batch` | chạy nhiều bước, trả một screenshot cuối |
 
@@ -183,9 +186,12 @@ Biến môi trường của server (đặt trong config MCP):
 | `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | thư mục được phép cho `file_upload` |
 | `BROWSER_KIT_WAKE` | 1 | `0` để server không mở `http://127.0.0.1:<port>/wake` trong Chrome đánh thức extension đang nghỉ (khi đó tự bấm Reconnect trong popup) |
 | `BROWSER_KIT_BROWSER` | rỗng | trình duyệt dùng để mở tab đánh thức: tên app trên macOS (`Google Chrome Beta`) hoặc lệnh/đường dẫn trên hệ khác. Mặc định: Google Chrome, rồi trình duyệt mặc định của máy |
+| `BROWSER_KIT_GIF_DIR` | `~/Downloads/browser-agent-kit` | nơi `gif_recorder` ghi file |
 | `BROWSER_KIT_DEBUG` | 0 | `1` để log ra stderr |
 
-CLI: `browser-agent-kit` (chạy server) · `setup [agent…]` · `extension` (in đường dẫn) · `doctor` (kiểm tra kết nối).
+CLI: `browser-agent-kit` (chạy server) · `setup [agent…]` · `remove [agent…]` (gỡ cấu hình) · `native [--extension-id ID | --remove]` (đăng ký native messaging host, xem dưới) · `extension` (in đường dẫn) · `pack [outDir]` (nén extension để đưa lên Web Store, xem [docs/publishing.md](docs/publishing.md)) · `doctor` (kiểm tra kết nối).
+
+**Native messaging host.** Wizard setup cũng đăng ký một host nhỏ (`server/src/native-host.js`) cho Chrome, Chromium, Brave và Edge. Chrome tự khởi động nó khi extension nạp; nó thăm dò port hub bằng TCP im lặng và báo cho extension ngay khi server xuất hiện, nên extension không còn phải tự thử WebSocket (chính những lần thử đó là thứ Chrome ghi vào trang Errors). Nó cũng giữ service worker của extension luôn thức. Host chỉ nói chuyện với đúng ID extension suy ra từ thư mục extension; nếu `chrome://extensions` hiện ID khác, chạy `browser-agent-kit native --extension-id <id>` rồi reload extension.
 
 ---
 
@@ -199,6 +205,8 @@ Extension giữ quyền `debugger` + `scripting` + `<all_urls>`, nên **ai nói 
 - **Allowlist**: `file:`, `chrome:`, `javascript:`, `data:` không bao giờ được điều khiển, kể cả Allow all. So khớp theo host và subdomain, không bị lừa bởi `example.com.evil.com`.
 - **Nội dung trang là dữ liệu**: mọi text lấy từ trang được bọc `<untrusted_page_content>`; ref sống trong isolated world nên script của trang không đọc hay sửa được.
 - **Overlay** trong shadow DOM, chỉ chèn text bằng `textContent`.
+- **Native messaging host** chỉ nhận kết nối từ đúng ID extension trong manifest, không mở socket nào, chỉ báo port hub có trả lời hay không.
+- **Downloads** chỉ đọc: kit liệt kê những gì Chrome đã tải, không bao giờ tự tải hay xóa.
 
 Phần còn lại là của bạn: agent được chạy JS và đọc trang trên site đã cho phép, nên chỉ Allow site cần thiết và yêu cầu agent xác nhận trước thao tác không đảo ngược được (mua hàng, gửi tin, xóa).
 
@@ -209,7 +217,7 @@ Phần còn lại là của bạn: agent được chạy JS và đọc trang tr�
 | Triệu chứng | Nguyên nhân / cách xử lý |
 |---|---|
 | Icon đỏ, "Not connected" | Chưa có agent nào khởi động server, hoặc port lệch. Mở Settings kiểm tra port, bấm Reconnect. `browser-agent-kit doctor` để thử. Mở popup cũng tự kích hoạt kết nối lại. |
-| Nút "Errors" trên thẻ extension, các dòng `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Vô hại và hiếm: mỗi dòng là một lần thăm dò lúc không có agent chạy server. Extension chỉ thử dồn dập trong 2 phút sau khi mở Chrome hoặc sau khi agent tắt, sau đó 5 phút mới thử một lần; agent khởi động sẽ đánh thức nó ngay qua tab wake. Bấm Clear all. Lỗi khác thì đáng báo cáo. |
+| Nút "Errors" trên thẻ extension, các dòng `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Vô hại: mỗi dòng là một lần thăm dò lúc không có agent chạy server. Có native host (`browser-agent-kit native`, wizard tự làm) thì extension chỉ tự thăm dò một giờ một lần; không có thì thử dồn dập 2 phút sau khi mở Chrome hoặc agent tắt, rồi 5 phút một lần. Agent khởi động sẽ đánh thức nó ngay qua host hoặc tab wake. Bấm Clear all. Lỗi khác thì đáng báo cáo. |
 | Một tab `http://127.0.0.1:7851/wake` lóe lên rồi tự đóng | Đó là server đánh thức extension đang nghỉ; extension đóng tab ngay khi kết nối xong. Nếu tab không đóng thì extension không chạy trong profile Chrome đó (xem chữ trên trang). `BROWSER_KIT_WAKE=0` để tắt. |
 | Agent nói "Site not allowed" | Bấm icon extension trên site đó → Allow this site. |
 | Thanh "Browser Agent Kit is debugging this browser" | Bình thường ở chế độ Real. Đừng bấm Cancel. Muốn không bao giờ thấy: chọn Fast, hoặc chạy Chrome với `--silent-debugger-extension-api`. |
@@ -224,9 +232,9 @@ Phần còn lại là của bạn: agent được chạy JS và đọc trang tr�
 
 ## 🗺 Chưa có
 
-- `gif_creator` ghi thao tác thành ảnh động.
-- Đọc DOM bên trong iframe cross-origin.
 - `find` bằng model nhỏ thay vì so khớp text.
+- `file_upload` theo ref bên trong iframe cross-origin (dùng đường chặn hộp thoại thay thế: click nút upload trong iframe rồi gọi `file_upload` không ref).
+- Bản đăng trên Chrome Web Store (file zip đã sẵn: `browser-agent-kit pack`).
 
 **Giới hạn thật:** lớp tool giống Claude in Chrome, nhưng kết quả cuối phụ thuộc model. Model yếu về vision nên dùng `read_page` + click theo ref thay vì tọa độ, và có thể tắt auto screenshot để giảm token.
 

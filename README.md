@@ -142,13 +142,16 @@ Tool names mirror Claude in Chrome, so prompts and skills written for Claude car
 | `tabs_context` · `tabs_create` · `tabs_close` | list, open (into the Agent group), close tabs |
 | `navigate` | go to a URL, `back`, `forward`, wait for load |
 | `computer` | `screenshot`, `left/right/middle/double/triple_click`, `left_click_drag`, `mouse_move`, `type`, `key`, `scroll`, `wait`, `zoom`; click by `ref` or `coordinate` |
-| `read_page` | compact page outline, every interactive element with a `ref_N` |
+| `read_page` | compact page outline, every interactive element with a `ref_N`; iframes (cross-origin too) are listed inline with refs like `f12_ref_3` |
 | `find` | natural-language element search returning refs |
 | `get_page_text` | visible text, paginated with `offset` |
 | `form_input` | fill several fields at once with the right events for React / Vue |
 | `javascript_tool` | run JS in the page through CDP, not blocked by CSP |
 | `read_console_messages` · `read_network_requests` | debugging |
 | `file_upload` | attach local files. Clicking an upload button never shows the OS file dialog: the kit intercepts it and `file_upload` fills it (no ref needed); otherwise pass the ref of the `<input type=file>` or the upload button |
+| `wait_for` | wait for text, a CSS selector, a ref or network idle (`gone=true` for spinners) instead of fixed sleeps |
+| `list_downloads` | files downloaded during the session with their saved paths; `wait=true` blocks until they finish |
+| `gif_recorder` | `start` / `stop` / `status`: record the tab as an animated GIF (cursor and status bar included) and get the file path |
 | `resize_window` | resize the window |
 | `browser_batch` | run several steps, one screenshot at the end |
 
@@ -182,9 +185,12 @@ Server environment variables (set in the MCP config):
 | `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | folders allowed for `file_upload` |
 | `BROWSER_KIT_WAKE` | 1 | `0` stops the server from opening `http://127.0.0.1:<port>/wake` in Chrome to wake an idle extension (then press Reconnect in the popup yourself) |
 | `BROWSER_KIT_BROWSER` | empty | browser used for the wake tab: an app name on macOS (`Google Chrome Beta`) or a command/path elsewhere. Default: Google Chrome, then the system default browser |
+| `BROWSER_KIT_GIF_DIR` | `~/Downloads/browser-agent-kit` | where `gif_recorder` writes files |
 | `BROWSER_KIT_DEBUG` | 0 | `1` logs to stderr |
 
-CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `remove [agent…]` (undo setup, keeps other servers) · `extension` (print the path) · `doctor` (check the connection).
+CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `remove [agent…]` (undo setup, keeps other servers) · `native [--extension-id ID | --remove]` (register the native messaging host, see below) · `extension` (print the path) · `pack [outDir]` (zip the extension for the Web Store, see [docs/publishing.md](docs/publishing.md)) · `doctor` (check the connection).
+
+**Native messaging host.** The setup wizard also registers a tiny native host (`server/src/native-host.js`) for Chrome, Chromium, Brave and Edge. Chrome starts it when the extension loads; it watches the hub port with silent TCP probes and tells the extension the moment a server appears, so the extension no longer has to try WebSocket connections on its own (those are what Chrome logs on the Errors page). It also keeps the extension's service worker warm. The host only ever talks to the extension id derived from the extension folder; if `chrome://extensions` shows a different id, run `browser-agent-kit native --extension-id <id>` and reload the extension.
 
 ---
 
@@ -198,6 +204,8 @@ The extension holds `debugger` + `scripting` + `<all_urls>`, so **whoever can ta
 - **Allowlist**: `file:`, `chrome:`, `javascript:`, `data:` can never be controlled, even with Allow all. Matching is by host and subdomain; `example.com.evil.com` does not match `example.com`.
 - **Page content is data**: everything read from a page is wrapped in `<untrusted_page_content>`; refs live in the isolated world, page scripts cannot read or forge them.
 - **Overlay** lives in a shadow DOM and only inserts text through `textContent`.
+- **Native messaging host** accepts connections only from the extension id in its manifest, never listens on a socket, and only reports whether the hub port answers.
+- **Downloads** are read-only: the kit lists what Chrome downloaded, it never starts or deletes downloads.
 
 The rest is on you: the agent can run JavaScript and read pages on allowed sites, so allow only what you need and have the agent confirm before irreversible actions (purchases, sending messages, deleting).
 
@@ -208,14 +216,15 @@ The rest is on you: the agent can run JavaScript and read pages on allowed sites
 | Symptom | Cause / fix |
 |---|---|
 | Red icon, "Not connected" | No agent has started the server yet, or the port differs. Check Settings, press Reconnect, or run `browser-agent-kit doctor`. Opening the popup also triggers a reconnect. |
-| "Errors" button on the extension card, lines like `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Harmless and rare: each line is one probe made while no agent was running the server. The extension retries eagerly only for 2 minutes after Chrome starts or an agent quits, then once every 5 minutes; a starting agent wakes it instantly via the wake tab. Click Clear all. Any other error text is worth reporting. |
+| "Errors" button on the extension card, lines like `WebSocket connection to 'ws://127.0.0.1:7851/extension' failed` | Harmless: each line is one probe made while no agent was running the server. With the native host registered (`browser-agent-kit native`, done by the wizard) the extension probes only once an hour; without it, eagerly for 2 minutes after Chrome starts or an agent quits, then every 5 minutes. A starting agent wakes it instantly through the host or the wake tab. Click Clear all. Any other error text is worth reporting. |
 | A tab at `http://127.0.0.1:7851/wake` flashed open | That is the server waking an idle extension; the extension closes the tab as soon as it connects. If the tab stays open, the extension is not running in that Chrome profile (see the page text). `BROWSER_KIT_WAKE=0` disables it. |
 | Agent reports "Site not allowed" | Click the extension icon on that site → Allow this site. |
 | "Browser Agent Kit is debugging this browser" bar | Normal in Real mode. Do not press Cancel. To never see it: switch to Fast, or launch Chrome with `--silent-debugger-extension-api`. |
 | "Cannot attach debugger" | DevTools is open on that tab. Close it. |
 | "Cannot run on this page" | `chrome://` pages, the Chrome Web Store and the PDF viewer are off limits for extensions. |
 | Synthetic click does not open a dropdown | Native `<select>` menus need `form_input`, or switch to Real. |
-| iframe content missing from `read_page` | Only the main frame is listed. Use screenshots and coordinate clicks for iframes. |
+| iframe content missing from `read_page` | Frames the extension cannot script (other extensions' pages, sandboxed frames without scripts) are skipped and counted in the header; use screenshots and coordinates for those. In Fast mode a coordinate click inside such a frame fails with a hint; Real mode handles it. |
+| `file_upload` says the input is in a cross-origin iframe | Click the upload button inside that iframe first (the kit intercepts the dialog), then call `file_upload` without a ref. |
 | Agent is refused with "user pressed Stop" | You pressed Stop on the overlay. Extension icon → Resume. |
 | Agent does not see the tools | Restart the agent or refresh its MCP server list (see the per-agent guide). |
 
@@ -223,9 +232,9 @@ The rest is on you: the agent can run JavaScript and read pages on allowed sites
 
 ## 🗺 Not yet
 
-- `gif_creator` (record actions as an animated GIF).
-- DOM access inside cross-origin iframes.
 - Model-based `find` instead of text matching.
+- `file_upload` by ref inside cross-origin iframes (use the intercepted-dialog path instead).
+- A published Chrome Web Store listing (the zip is ready: `browser-agent-kit pack`).
 
 **Honest limit:** the tool layer matches Claude in Chrome, but results still depend on the model. Weak-vision models should rely on `read_page` and ref clicks instead of coordinates, and can disable auto screenshots to save tokens.
 

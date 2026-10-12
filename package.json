@@ -12,6 +12,7 @@
     "extension",
     "skill",
     "configs",
+    "docs",
     "README.md"
   ],
   "scripts": {
