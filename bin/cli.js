@@ -54,7 +54,7 @@ function removeCodex() {
   if (!fs.existsSync(file)) return null;
   const src = fs.readFileSync(file, 'utf8');
   // Drop [mcp_servers.browser] and [mcp_servers.browser.env] tables up to the next table header.
-  const out = src.replace(/\n?\[mcp_servers\.browser(?:\.env)?\][^[]*/g, '\n').replace(/\n{3,}/g, '\n\n');
+  const out = src.replace(/(^|\n)\[mcp_servers\.browser(?:\.env)?\][\s\S]*?(?=\n\[|$(?![\s\S]))/g, '$1').replace(/\n{3,}/g, '\n\n');
   if (out === src) return null;
   fs.writeFileSync(file, out);
   return file;
