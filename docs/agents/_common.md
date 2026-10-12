@@ -39,3 +39,11 @@ Prints a random token, writes it into the agent config, and tells you to paste t
 ## F. Teach the agent (optional but recommended)
 
 Tools carry full descriptions and the server sends usage instructions over MCP, so most agents just work. For better behaviour, add the text of `configs/AGENTS.md.snippet` to the agent's rules file; each guide says where that file lives. Claude Code can also use `skill/SKILL.md` as a skill.
+
+## G. Uninstall from an agent
+
+```bash
+node ~/.browser-agent-kit/bin/cli.js remove antigravity     # or any agent name; no name = all
+```
+
+Removes only the `browser` entry and leaves other MCP servers in place. Remove the extension from `chrome://extensions` for a full reset.

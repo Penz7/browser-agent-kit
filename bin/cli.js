@@ -35,8 +35,29 @@ function mergeJson(file, mutate) {
   return file;
 }
 
+function removeFromJson(file, key = 'mcpServers') {
+  if (!fs.existsSync(file)) return null;
+  let d;
+  try { d = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return null; }
+  if (!d[key] || !d[key].browser) return null;
+  delete d[key].browser;
+  fs.writeFileSync(file, JSON.stringify(d, null, 2) + '\n');
+  return file;
+}
+
 function setupJsonClient(file) {
   return mergeJson(file, (d) => { d.mcpServers = d.mcpServers || {}; d.mcpServers.browser = mcpEntry(); });
+}
+
+function removeCodex() {
+  const file = path.join(home, '.codex', 'config.toml');
+  if (!fs.existsSync(file)) return null;
+  const src = fs.readFileSync(file, 'utf8');
+  // Drop [mcp_servers.browser] and [mcp_servers.browser.env] tables up to the next table header.
+  const out = src.replace(/\n?\[mcp_servers\.browser(?:\.env)?\][^[]*/g, '\n').replace(/\n{3,}/g, '\n\n');
+  if (out === src) return null;
+  fs.writeFileSync(file, out);
+  return file;
 }
 
 function setupCodex() {
@@ -147,6 +168,25 @@ function setupCopilot() {
   return mergeJson(file, (d) => { d.servers = d.servers || {}; d.servers.browser = { type: 'stdio', ...mcpEntry() }; });
 }
 
+const REMOVERS = {
+  codex: removeCodex,
+  claude: () => { const r = spawnSync('claude', ['mcp', 'remove', 'browser', '--scope', 'user'], { stdio: 'inherit' }); return r.status === 0 ? 'claude mcp (user scope)' : null; },
+  antigravity: () => [
+    removeFromJson(path.join(home, '.gemini', 'config', 'mcp_config.json')),
+    removeFromJson(path.join(home, '.gemini', 'antigravity', 'mcp_config.json')),
+    removeFromJson(path.join(process.cwd(), '.agents', 'mcp_config.json'))
+  ].filter(Boolean).join(' and ') || null,
+  cursor: () => removeFromJson(path.join(home, '.cursor', 'mcp.json')),
+  gemini: () => removeFromJson(path.join(home, '.gemini', 'settings.json')),
+  windsurf: () => removeFromJson(path.join(home, '.codeium', 'windsurf', 'mcp_config.json')),
+  cline: () => removeFromJson(path.join(vscodeGlobalStorage(), 'saoudrizwan.claude-dev', 'settings', 'cline_mcp_settings.json')),
+  roo: () => removeFromJson(path.join(vscodeGlobalStorage(), 'rooveterinaryinc.roo-cline', 'settings', 'mcp_settings.json')),
+  kiro: () => removeFromJson(path.join(home, '.kiro', 'settings', 'mcp.json')),
+  opencode: () => removeFromJson(path.join(process.env.XDG_CONFIG_HOME || path.join(home, '.config'), 'opencode', 'opencode.json'), 'mcp'),
+  copilot: () => removeFromJson(path.join(process.cwd(), '.vscode', 'mcp.json'), 'servers')
+};
+REMOVERS.agy = REMOVERS.antigravity;
+
 const AGENTS = {
   codex: setupCodex,
   cline: () => setupJsonClient(path.join(vscodeGlobalStorage(), 'saoudrizwan.claude-dev', 'settings', 'cline_mcp_settings.json')),
@@ -247,6 +287,17 @@ switch (cmd) {
     }
     break;
   }
+  case 'remove': {
+    const names = rest.filter((n) => !n.startsWith('--'));
+    const targets = names.length ? names : Object.keys(REMOVERS).filter((k) => k !== 'agy');
+    if (names.some((n) => !REMOVERS[n])) { console.log(`Usage: browser-agent-kit remove [<${Object.keys(REMOVERS).filter((k) => k !== 'agy').join('|')}> ...]   (no names = all)`); process.exit(1); }
+    for (const n of targets) {
+      const where = REMOVERS[n]();
+      console.log(where ? `${n}: removed from ${where}` : `${n}: nothing to remove`);
+    }
+    console.log('\nThe Chrome extension is untouched; remove it from chrome://extensions if you want a full reset.');
+    break;
+  }
   case 'extension':
     console.log(EXTENSION);
     break;
@@ -254,6 +305,6 @@ switch (cmd) {
     await doctor();
     break;
   default:
-    console.log('Unknown command. Use: serve | setup <agent> | extension | doctor');
+    console.log('Unknown command. Use: serve | setup [agent…] | remove [agent…] | extension | doctor');
     process.exit(1);
 }

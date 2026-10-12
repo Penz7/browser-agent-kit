@@ -182,7 +182,7 @@ Server environment variables (set in the MCP config):
 | `BROWSER_KIT_UPLOAD_ROOTS` | `$HOME:$TMPDIR:/tmp` | folders allowed for `file_upload` |
 | `BROWSER_KIT_DEBUG` | 0 | `1` logs to stderr |
 
-CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `extension` (print the path) · `doctor` (check the connection).
+CLI: `browser-agent-kit` (run the server) · `setup [agent…]` · `remove [agent…]` (undo setup, keeps other servers) · `extension` (print the path) · `doctor` (check the connection).
 
 ---
 
