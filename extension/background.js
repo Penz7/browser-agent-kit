@@ -72,7 +72,10 @@ async function handleMessage(raw) {
 chrome.alarms.create('ak-keepalive', { periodInMinutes: 0.5 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === 'ak-keepalive') connect(); });
 chrome.runtime.onStartup.addListener(() => connect());
-chrome.runtime.onInstalled.addListener(() => connect());
+chrome.runtime.onInstalled.addListener((d) => {
+  connect();
+  if (d.reason === 'install') chrome.tabs.create({ url: chrome.runtime.getURL('welcome.html') });
+});
 chrome.storage.onChanged.addListener(async (changes, area) => {
   if (area !== 'local') return;
   settings = await getSettings();

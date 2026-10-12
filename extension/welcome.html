@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>Browser Agent Kit · bắt đầu</title>
+<style>
+  body { font: 15px/1.6 system-ui, -apple-system, sans-serif; max-width: 640px; margin: 48px auto; padding: 0 20px; color: #1d1933; }
+  h1 { font-size: 26px; margin-bottom: 4px; }
+  .sub { color: #666; margin-top: 0; }
+  .card { border: 1px solid #e3e0f0; border-radius: 12px; padding: 16px 20px; margin: 16px 0; background: #faf9ff; }
+  .status { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+  .dot { width: 12px; height: 12px; border-radius: 50%; background: #d33; }
+  .dot.on { background: #2a2; }
+  code { background: #eee9ff; padding: 2px 6px; border-radius: 4px; font-size: 13px; }
+  ol li { margin: 8px 0; }
+  label { display: block; margin: 10px 0; }
+  button { padding: 8px 14px; border: 0; border-radius: 8px; background: #7c5cff; color: #fff; font: 600 14px system-ui; cursor: pointer; }
+  a { color: #5b3df5; }
+</style>
+</head>
+<body>
+  <h1>Browser Agent Kit đã cài</h1>
+  <p class="sub">Cho phép AI agent (Codex, Claude Code, Antigravity, Cursor…) điều khiển Chrome này.</p>
+
+  <div class="card">
+    <div class="status"><span id="dot" class="dot"></span><span id="status">Đang kiểm tra kết nối…</span></div>
+    <p id="hint" style="margin:8px 0 0;color:#555">Server MCP sẽ tự chạy khi agent của bạn khởi động. Chạy <code>browser-agent-kit doctor</code> trong terminal để kiểm tra bất cứ lúc nào.</p>
+  </div>
+
+  <div class="card">
+    <strong>Cho phép site</strong>
+    <p style="margin:6px 0">Agent chỉ thao tác được trên site bạn cho phép. Mở site đó, bấm icon extension, chọn <em>Allow this site</em>. Hoặc:</p>
+    <label><input type="checkbox" id="allowAll"> Cho phép mọi site (tiện nhưng kém an toàn hơn)</label>
+  </div>
+
+  <div class="card">
+    <strong>Thử ngay</strong>
+    <ol>
+      <li>Mở agent của bạn (Antigravity, Codex, Claude Code…).</li>
+      <li>Ra lệnh: <code>Mở tab mới, vào example.com, đọc tiêu đề trang.</code></li>
+      <li>Tab mới sẽ nằm trong group <em>Agent</em>, viền tím sáng khi agent đang thao tác, nút <em>Dừng</em> ở thanh trên.</li>
+    </ol>
+  </div>
+
+  <p><button id="options">Mở Settings</button> &nbsp; <a href="https://github.com/Penz7/browser-agent-kit" target="_blank" rel="noopener">Tài liệu</a></p>
+  <script type="module" src="welcome.js"></script>
+</body>
+</html>

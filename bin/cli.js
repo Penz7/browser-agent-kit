@@ -62,6 +62,52 @@ function setupClaude() {
 
 const home = os.homedir();
 
+// Detect which agents are installed on this machine.
+function detectAgents() {
+  const found = [];
+  const has = (p) => fs.existsSync(p);
+  const bin = (name) => { const r = spawnSync('sh', ['-c', `command -v ${name}`], { encoding: 'utf8' }); return r.status === 0; };
+  if (has(path.join(home, '.codex')) || bin('codex')) found.push('codex');
+  if (has(path.join(home, '.claude')) || bin('claude')) found.push('claude');
+  if (has(path.join(home, '.gemini', 'antigravity')) || has('/Applications/Antigravity.app') || has(path.join(home, 'Applications', 'Antigravity.app'))) found.push('antigravity');
+  if (has(path.join(home, '.cursor'))) found.push('cursor');
+  if (has(path.join(home, '.gemini', 'settings.json')) || bin('gemini')) found.push('gemini');
+  if (has(path.join(home, '.codeium', 'windsurf'))) found.push('windsurf');
+  return found;
+}
+
+function openInChrome(url) {
+  const tries = process.platform === 'darwin'
+    ? [['open', ['-a', 'Google Chrome', url]]]
+    : process.platform === 'win32'
+      ? [['cmd', ['/c', 'start', 'chrome', url]]]
+      : [['google-chrome', [url]], ['chromium', [url]], ['xdg-open', [url]]];
+  for (const [c, a] of tries) { const r = spawnSync(c, a, { stdio: 'ignore' }); if (!r.error && r.status === 0) return true; }
+  return false;
+}
+
+function copyToClipboard(text) {
+  const cmd = process.platform === 'darwin' ? ['pbcopy', []] : process.platform === 'win32' ? ['clip', []] : ['xclip', ['-selection', 'clipboard']];
+  const r = spawnSync(cmd[0], cmd[1], { input: text, stdio: ['pipe', 'ignore', 'ignore'] });
+  return !r.error && r.status === 0;
+}
+
+async function waitForExtension(seconds) {
+  const { Bridge } = await import(path.join(ROOT, 'server', 'src', 'bridge.js'));
+  const b = new Bridge({ port: Number(PORT), token: TOKEN });
+  await b.start();
+  if (b.mode === 'leaf') { b.close(); return 'hub-running'; }
+  const end = Date.now() + seconds * 1000;
+  let dots = 0;
+  while (Date.now() < end) {
+    if (b.connected) { b.close(); return 'connected'; }
+    await new Promise((r) => setTimeout(r, 1000));
+    if (++dots % 5 === 0) process.stdout.write('.');
+  }
+  b.close();
+  return 'timeout';
+}
+
 // Antigravity (Google): global config at ~/.gemini/config/mcp_config.json (older builds used
 // ~/.gemini/antigravity/mcp_config.json); a workspace file lives at .agents/mcp_config.json.
 function setupAntigravity() {
@@ -128,9 +174,22 @@ switch (cmd) {
     await import(SERVER);
     break;
   case 'setup': {
-    const names = rest.filter((n) => !n.startsWith('--'));
-    if (!names.length || names.some((n) => !AGENTS[n])) {
-      console.log(`Usage: browser-agent-kit setup <${Object.keys(AGENTS).join('|')}> [...]`);
+    let names = rest.filter((n) => !n.startsWith('--'));
+    const wizard = names.length === 0 && !rest.includes('--help');
+    if (wizard) {
+      names = detectAgents();
+      console.log('Browser Agent Kit setup\n');
+      if (!names.length) {
+        console.log('No supported agent detected. Run: browser-agent-kit setup <agent>, e.g. setup antigravity');
+        console.log(`Supported: ${Object.keys(AGENTS).filter((k) => k !== 'agy').join(', ')}`);
+        process.exit(1);
+      }
+      console.log(`Detected agents: ${names.join(', ')}`);
+    }
+    if ((!wizard && !names.length) || names.some((n) => !AGENTS[n])) {
+      console.log(`Usage: browser-agent-kit setup [<${Object.keys(AGENTS).filter((k) => k !== 'agy').join('|')}> ...]`);
+      console.log('  With no agent names: detects installed agents, configures all of them, opens chrome://extensions and waits for the extension.');
+      console.log('  --open also opens chrome://extensions after configuring the named agents.');
       console.log('  antigravity --workspace writes ./.agents/mcp_config.json for the current project instead of the global file.');
       console.log('  json prints a generic mcpServers block for Cline, Roo Code, OpenCode, etc.');
       console.log('  --token generates a shared secret and puts it in the config (paste the same value into the extension Settings).');
@@ -141,6 +200,18 @@ switch (cmd) {
       if (where) console.log(`${n}: configured -> ${where}`);
     }
     printNext();
+    if (wizard || rest.includes('--open')) {
+      const copied = copyToClipboard(EXTENSION);
+      const opened = openInChrome('chrome://extensions');
+      console.log(`${opened ? 'Opened chrome://extensions in Chrome.' : 'Open chrome://extensions in Chrome.'} Turn on "Developer mode", click "Load unpacked"${copied ? ' and paste the path (already copied to your clipboard):' : ' and choose:'}`);
+      console.log(`  ${EXTENSION}`);
+      process.stdout.write('\nWaiting up to 3 minutes for the extension to connect');
+      const r = await waitForExtension(180);
+      console.log();
+      if (r === 'connected') console.log('OK: extension connected. Open a site, click the extension icon and press "Allow this site". You are ready.');
+      else if (r === 'hub-running') console.log('An agent is already running the server; click the extension icon in Chrome to confirm it shows "Connected".');
+      else console.log('Extension did not connect yet. After loading it, run: browser-agent-kit doctor');
+    }
     break;
   }
   case 'extension':
