@@ -19,7 +19,11 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
       - run: npm ci
+      # jsdom (dev dependency for the DOM unit tests) needs Node 20+; the server and CLI support Node 18.
       - run: npm test
+        if: matrix.node != 18
+      - run: node server/test/native.test.mjs && node server/test/smoke.mjs
+        if: matrix.node == 18
       - run: node bin/cli.js pack
       - run: node bin/cli.js native --extension-id abcdefghijklmnopabcdefghijklmnop
       - run: node bin/cli.js native --remove

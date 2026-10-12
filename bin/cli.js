@@ -6,7 +6,7 @@
 //   browser-agent-kit doctor          -> check whether the Chrome extension is connected
 //   browser-agent-kit native          -> register the native messaging host (silent server detection)
 //   browser-agent-kit pack [outDir]   -> zip the extension for the Chrome Web Store / self-hosting
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -15,6 +15,8 @@ import { extensionIdForPath } from '../server/src/extension-id.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const SERVER = path.join(ROOT, 'server', 'src', 'index.js');
+// Dynamic import() needs a file:// URL: a bare Windows path like D:\... is read as a URL scheme.
+const importFile = (p) => import(pathToFileURL(p).href);
 const EXTENSION = path.join(ROOT, 'extension');
 const PORT = process.env.BROWSER_KIT_PORT || '7851';
 const [cmd, ...rest] = process.argv.slice(2);
@@ -122,7 +124,7 @@ function copyToClipboard(text) {
 }
 
 async function waitForExtension(seconds) {
-  const { Bridge } = await import(path.join(ROOT, 'server', 'src', 'bridge.js'));
+  const { Bridge } = await importFile(path.join(ROOT, 'server', 'src', 'bridge.js'));
   const b = new Bridge({ port: Number(PORT), token: TOKEN });
   await b.start();
   if (b.mode === 'leaf') { b.close(); return 'hub-running'; }
@@ -293,7 +295,7 @@ async function doctor() {
   if (hub !== 'open') {
     console.log(`No MCP server is listening on port ${PORT}. That is normal when no agent is running.`);
     console.log('Starting a temporary server for 5s to see whether the extension connects...');
-    const { Bridge } = await import(path.join(ROOT, 'server', 'src', 'bridge.js'));
+    const { Bridge } = await importFile(path.join(ROOT, 'server', 'src', 'bridge.js'));
     const b = new Bridge({ port: Number(PORT), token: process.env.BROWSER_KIT_TOKEN || '' });
     await b.start();
     await new Promise((r) => setTimeout(r, 5000));
@@ -308,7 +310,7 @@ async function doctor() {
 switch (cmd) {
   case undefined:
   case 'serve':
-    await import(SERVER);
+    await importFile(SERVER);
     break;
   case 'setup': {
     let names = rest.filter((n) => !n.startsWith('--'));
@@ -391,7 +393,7 @@ switch (cmd) {
     break;
   case 'pack': {
     // Build the Chrome Web Store / self-hosting zip of the extension folder.
-    const { zipDir } = await import(path.join(ROOT, 'server', 'src', 'zip.js'));
+    const { zipDir } = await importFile(path.join(ROOT, 'server', 'src', 'zip.js'));
     const manifest = JSON.parse(fs.readFileSync(path.join(EXTENSION, 'manifest.json'), 'utf8'));
     const outDir = path.resolve(rest.find((a) => !a.startsWith('--')) || path.join(ROOT, 'dist'));
     fs.mkdirSync(outDir, { recursive: true });
