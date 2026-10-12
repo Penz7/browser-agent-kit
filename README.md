@@ -111,9 +111,22 @@ browser-agent-kit doctor     kiểm tra extension có nối được không
 | `resize_window` | đổi kích thước cửa sổ |
 | `browser_batch` | chạy nhiều bước, trả một screenshot cuối |
 
+## Chế độ nhanh, tab group và overlay
+
+Mặc định kit chạy ở **chế độ nhanh** (Settings → Input mode → Fast):
+
+- Click, gõ chữ, cuộn, chụp màn hình đi qua content script và `chrome.tabs.captureVisibleTab`, **không gắn debugger**, nên không hiện thanh "is debugging this browser" và nhanh hơn rõ rệt.
+- Chỉ các việc cần sự kiện thật mới gắn debugger: phím tắt (`key`), kéo thả, `javascript_tool`, console, network, upload file. Debugger tự gỡ sau 20 giây rảnh (Settings → Release debugger after idle; đặt 0 để giữ, cần khi muốn bắt console/network liên tục).
+- Gõ chữ dùng `execCommand('insertText')` trên ô đang focus nên React, Vue, các editor như Draft.js, ProseMirror đều nhận. Nếu không có ô nào đang focus, kit tự chuyển sang gõ phím thật qua debugger.
+- Click giả lập không mở được menu `<select>` gốc của trình duyệt, kit sẽ nhắc agent dùng `form_input`. Site nào kiểm tra `isTrusted` thì đổi sang **Real** trong Settings, mọi thao tác sẽ đi qua CDP như trước.
+
+**Tab group**: tab do agent mở (`tabs_create`) được gom vào group tên "Agent", màu tím, mỗi cửa sổ một group. Đổi tên và màu trong Settings, hoặc tắt.
+
+**Overlay**: tab đang bị điều khiển có viền tím nhấp nháy, thanh trạng thái ở trên ghi việc đang làm ("Click: Sign in", "Đọc trang"...), vòng vàng tại điểm vừa click. Overlay tự ẩn sau 8 giây rảnh và được ẩn tạm khi chụp màn hình nên không lọt vào ảnh gửi cho model. Nút **Dừng** trên thanh làm mọi lệnh tiếp theo bị từ chối với thông báo "user pressed Stop"; bấm **Resume** trong popup để tiếp tục.
+
 ## Cơ chế quan trọng
 
-- **Ảnh và tọa độ**: screenshot được thu nhỏ về tối đa 1024px ngang (`BROWSER_KIT_MAX_WIDTH`). Server và extension cùng tính một hệ số scale từ kích thước viewport, nên tọa độ model đưa luôn khớp dù màn hình Retina.
+- **Ảnh và tọa độ**: screenshot được thu nhỏ về tối đa 1024px ngang (`BROWSER_KIT_MAX_WIDTH`). Server và extension cùng tính một hệ số scale từ kích thước viewport, nên tọa độ model đưa luôn khớp dù màn hình Retina. Ảnh được resize bằng OffscreenCanvas ngay trong extension, không cần thư viện ảnh ở server.
 - **Ref ổn định trong một trang**: ref gắn với phần tử DOM thật, sống tới khi trang điều hướng. Click theo ref tự cuộn phần tử vào giữa màn hình, báo nếu bị phần tử khác che.
 - **Sự kiện thật**: chuột, phím đi qua `Input.dispatchMouseEvent` / `Input.dispatchKeyEvent` của CDP nên trang web nhận như người thao tác. `cmd+a/c/v/x/z` trên macOS được gắn thêm editing command để hoạt động đúng.
 - **Nhiều agent cùng lúc**: process server đầu tiên giữ port và làm hub. Process sau (agent thứ hai) tự chuyển sang chế độ leaf và relay qua hub. Không cần cấu hình.
@@ -136,7 +149,7 @@ browser-agent-kit doctor     kiểm tra extension có nối được không
 ## Sự cố thường gặp
 
 - **Icon đỏ**: chưa có agent nào khởi động server, hoặc port lệch. Mở Settings của extension kiểm tra port, bấm Reconnect.
-- **Thanh "Browser Agent Kit is debugging this browser"**: bình thường khi dùng CDP. Đừng bấm Cancel, nếu bấm thì lần gọi sau sẽ tự attach lại. Muốn ẩn hẳn: chạy Chrome với cờ `--silent-debugger-extension-api`.
+- **Thanh "Browser Agent Kit is debugging this browser"**: chỉ hiện khi dùng phím tắt, JS, console, network, kéo thả, và tự biến mất sau 20 giây rảnh. Đừng bấm Cancel, nếu bấm thì lần gọi sau sẽ tự attach lại. Muốn không bao giờ thấy: chạy Chrome với cờ `--silent-debugger-extension-api`.
 - **"Cannot attach debugger"**: tab đang mở DevTools. Đóng DevTools của tab đó.
 - **"Cannot run on this page"**: trang `chrome://`, Chrome Web Store, hoặc PDF viewer. Chrome không cho extension can thiệp.
 - **iframe cross-origin**: `read_page`/`find` chỉ thấy frame chính. Dùng screenshot và click theo tọa độ cho nội dung trong iframe.

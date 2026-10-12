@@ -78,6 +78,59 @@ assert(fi.results[3].error && fi.results[3].error.includes('not a form control')
 const pt = agentDom('text', { offset: 0, limit: 7 });
 assert(pt.text.length === 7 && pt.total > 7, 'text supports offset/limit');
 
+// fast-path click: synthetic events + focus + activation
+global.PointerEvent = dom.window.PointerEvent || dom.window.MouseEvent;
+global.MouseEvent = dom.window.MouseEvent;
+global.KeyboardEvent = dom.window.KeyboardEvent;
+const seen = [];
+const btn = document.querySelector('button[type=submit]');
+for (const t of ['mousedown', 'mouseup', 'click']) btn.addEventListener(t, (e) => seen.push(t + ':' + e.clientX));
+dom.window.document.elementFromPoint = (x, y) => (x === 60 && y === 20 ? btn : null);
+let ck = agentDom('click', { ref: signRef, button: 'left', clickCount: 1 });
+assert(!ck.error && seen.join(',') === 'mousedown:60,mouseup:60,click:60', 'fast click fires mousedown/mouseup/click at element center');
+assert(ck.name === 'Sign in' && ck.covered === false, 'fast click reports target name');
+let agreeClicks = 0;
+document.getElementById('agree').checked = false;
+document.getElementById('agree').addEventListener('click', () => agreeClicks++);
+dom.window.document.elementFromPoint = () => document.getElementById('agree');
+agentDom('click', { ref: refOf('checkbox'), clickCount: 1 });
+assert(agreeClicks === 1 && document.getElementById('agree').checked === true, 'synthetic click toggles a checkbox (activation behavior)');
+dom.window.document.elementFromPoint = () => null;
+ck = agentDom('click', { x: 5, y: 5 });
+assert(ck.error && /Nothing is rendered/.test(ck.error), 'click on empty point gives a helpful error');
+
+// fast-path typing (jsdom has no execCommand -> exercises the fallback branch)
+const email = document.getElementById('email');
+email.value = '';
+email.focus();
+let inputs = 0;
+email.addEventListener('input', () => inputs++);
+let tr = agentDom('typeText', { text: 'hi' });
+assert(!tr.fallback && email.value === 'hi' && inputs === 1 && tr.into === 'Email', 'typeText appends into focused input and fires input');
+let submitted = 0;
+email.form.requestSubmit = () => submitted++;
+agentDom('typeText', { text: '\n' });
+assert(submitted === 1, 'Enter in a text input submits its form');
+btn.focus();
+tr = agentDom('typeText', { text: 'x' });
+assert(tr.fallback === true, 'typeText reports fallback when nothing editable is focused');
+
+// scroll
+let scrolled = null;
+dom.window.scrollBy = (o) => { scrolled = o; };
+dom.window.document.elementFromPoint = () => null;
+const sc = agentDom('scroll', { dx: 0, dy: 300 });
+assert(scrolled && scrolled.top === 300 && sc.scroller === 'window', 'scroll falls back to window.scrollBy');
+
+// overlay
+global.chrome = { runtime: { sendMessage() {} } };
+agentDom('overlay', { state: 'show', text: 'Đọc trang', agent: 'Codex', x: 10, y: 10 });
+const host = document.getElementById('__ak_overlay_host');
+assert(host && host.shadowRoot.querySelector('.msg').textContent === 'Đọc trang', 'overlay shows status text in a shadow root');
+assert(!agentDom('snapshot', { mode: 'full' }).lines.join('\n').includes('ak_overlay'), 'overlay host is excluded from read_page');
+agentDom('overlay', { state: 'hide' });
+assert(!document.getElementById('__ak_overlay_host'), 'overlay hide removes the host');
+
 // keys
 let k = parseCombo('ctrl+shift+t');
 assert(k.modifiers === (MOD.ctrl | MOD.shift) && k.key.code === 'KeyT', 'parseCombo handles ctrl+shift+t');

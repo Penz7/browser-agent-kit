@@ -98,7 +98,7 @@ export function agentDom(action, args) {
       if (lines.length >= maxLines) { total++; return; }
       if (el.nodeType !== 1) return;
       const tag = el.tagName.toLowerCase();
-      if (SKIP_TAGS.has(tag) || isHidden(el)) return;
+      if (SKIP_TAGS.has(tag) || el.id === OVERLAY_ID || isHidden(el)) return;
       const pad = '  '.repeat(depth);
       let emitted = false;
       const interactive = el.matches(INTERACTIVE) && hasBox(el);
@@ -144,7 +144,152 @@ export function agentDom(action, args) {
   };
   const fire = (el, type, init) => el.dispatchEvent(new (type === 'input' ? InputEvent : Event)(type, { bubbles: true, cancelable: true, ...(init || {}) }));
 
+  const OVERLAY_ID = '__ak_overlay_host';
+  const withOverlayHidden = (fn) => {
+    const host = d.getElementById(OVERLAY_ID);
+    const prev = host ? host.style.display : null;
+    if (host) host.style.display = 'none';
+    try { return fn(); } finally { if (host) host.style.display = prev; }
+  };
+  const modsOf = (m) => {
+    const t = String(m || '').toLowerCase();
+    return { ctrlKey: /ctrl|control/.test(t), shiftKey: /shift/.test(t), altKey: /alt|option/.test(t), metaKey: /meta|cmd|command|super/.test(t) };
+  };
+  const keyEvent = (el, type, key, code, keyCode) =>
+    el.dispatchEvent(new KeyboardEvent(type, { key, code, keyCode, which: keyCode, bubbles: true, cancelable: true, composed: true }));
+
   switch (action) {
+    case 'click': {
+      let el = null;
+      let x = args.x;
+      let y = args.y;
+      if (args.ref) {
+        el = elOf(args.ref);
+        if (!el) return notFound(args.ref);
+        el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
+        const c = center(el);
+        x = c.x; y = c.y;
+      }
+      if (typeof x !== 'number' || typeof y !== 'number') return { error: 'click needs a ref or x/y' };
+      const top = withOverlayHidden(() => d.elementFromPoint(x, y));
+      const target = el ? ((top && el.contains(top)) ? top : el) : top;
+      if (!target) return { error: `Nothing is rendered at (${Math.round(x)}, ${Math.round(y)}). Take a screenshot and try again.` };
+      const covered = !!(el && top && !el.contains(top) && !top.contains(el));
+      const button = args.button === 'right' ? 2 : args.button === 'middle' ? 1 : 0;
+      const base = { bubbles: true, cancelable: true, composed: true, view: w, clientX: x, clientY: y, screenX: x, screenY: y, button, ...modsOf(args.modifiers) };
+      const PE = w.PointerEvent || MouseEvent;
+      const pe = { pointerId: 1, pointerType: 'mouse', isPrimary: true };
+      const fireAt = (type, Ctor, extra) => target.dispatchEvent(new Ctor(type, { ...base, ...extra }));
+      fireAt('pointerover', PE, pe); fireAt('mouseover', MouseEvent, {});
+      fireAt('pointermove', PE, pe); fireAt('mousemove', MouseEvent, {});
+      const n = args.clickCount || 1;
+      for (let i = 1; i <= n; i++) {
+        fireAt('pointerdown', PE, { ...pe, buttons: 1, detail: i });
+        const proceed = fireAt('mousedown', MouseEvent, { buttons: 1, detail: i });
+        if (i === 1 && proceed) {
+          const f = target.closest('input,textarea,select,button,a[href],[tabindex],[contenteditable]') || target;
+          try { f.focus({ preventScroll: true }); } catch { /* not focusable */ }
+        }
+        fireAt('pointerup', PE, { ...pe, detail: i }); fireAt('mouseup', MouseEvent, { detail: i });
+        if (button === 2) fireAt('contextmenu', MouseEvent, { detail: i });
+        else if (button === 0) { fireAt('click', MouseEvent, { detail: i }); if (i === 2) fireAt('dblclick', MouseEvent, { detail: 2 }); }
+        else fireAt('auxclick', MouseEvent, { detail: i });
+      }
+      const tag = target.tagName.toLowerCase();
+      const hint = tag === 'select' || target.closest('select') ? 'Native <select> menus cannot open from synthetic clicks; use form_input to choose an option.' : undefined;
+      return { x, y, covered, tag, name: trunc(nameOf(el || target), 60), hint };
+    }
+
+    case 'typeText': {
+      const ae = d.activeElement;
+      const tag = ae ? ae.tagName : '';
+      const editable = !!ae && (ae.isContentEditable || tag === 'TEXTAREA' ||
+        (tag === 'INPUT' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'file', 'range', 'color', 'image'].includes((ae.type || 'text').toLowerCase())));
+      if (!editable) return { fallback: true };
+      const text = String(args.text);
+      for (const part of text.split(/(\r\n|\r|\n)/)) {
+        if (!part) continue;
+        if (/^(\r\n|\r|\n)$/.test(part)) {
+          if (tag === 'TEXTAREA') { if (!d.execCommand('insertText', false, '\n')) { setNativeValue(ae, ae.value + '\n'); fire(ae, 'input'); } }
+          else if (ae.isContentEditable) { if (!d.execCommand('insertParagraph')) d.execCommand('insertText', false, '\n'); }
+          else {
+            const proceed = keyEvent(ae, 'keydown', 'Enter', 'Enter', 13);
+            keyEvent(ae, 'keypress', 'Enter', 'Enter', 13);
+            keyEvent(ae, 'keyup', 'Enter', 'Enter', 13);
+            if (proceed && ae.form) { if (ae.form.requestSubmit) ae.form.requestSubmit(); else ae.form.submit(); }
+          }
+          continue;
+        }
+        let ok = false;
+        try { ok = d.execCommand('insertText', false, part); } catch { ok = false; }
+        if (!ok) {
+          if (ae.isContentEditable) { ae.textContent += part; fire(ae, 'input', { inputType: 'insertText', data: part }); }
+          else { setNativeValue(ae, (ae.value || '') + part); fire(ae, 'input', { inputType: 'insertText', data: part }); }
+        }
+      }
+      return { typed: text.length, into: trunc(nameOf(ae), 40) || tag.toLowerCase() };
+    }
+
+    case 'scroll': {
+      let x = args.x;
+      let y = args.y;
+      if (args.ref) {
+        const el = elOf(args.ref);
+        if (!el) return notFound(args.ref);
+        el.scrollIntoView({ block: 'center', behavior: 'instant' });
+        const c = center(el); x = c.x; y = c.y;
+      }
+      if (typeof x !== 'number' || typeof y !== 'number') { x = w.innerWidth / 2; y = w.innerHeight / 2; }
+      const dx = args.dx || 0;
+      const dy = args.dy || 0;
+      let scroller = null;
+      for (let n = withOverlayHidden(() => d.elementFromPoint(x, y)); n && n !== d.body && n !== d.documentElement; n = n.parentElement) {
+        const cs = getComputedStyle(n);
+        const canY = /(auto|scroll|overlay)/.test(cs.overflowY) && n.scrollHeight > n.clientHeight + 1;
+        const canX = /(auto|scroll|overlay)/.test(cs.overflowX) && n.scrollWidth > n.clientWidth + 1;
+        if ((dy && canY) || (dx && canX)) { scroller = n; break; }
+      }
+      if (scroller) scroller.scrollBy({ left: dx, top: dy, behavior: 'instant' }); else w.scrollBy({ left: dx, top: dy, behavior: 'instant' });
+      return { scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight, viewportWidth: w.innerWidth, scroller: scroller ? scroller.tagName.toLowerCase() : 'window' };
+    }
+
+    case 'overlay': {
+      let host = d.getElementById(OVERLAY_ID);
+      if (args.state === 'hide') { if (host) host.remove(); return { ok: true }; }
+      if (!host) {
+        host = d.createElement('div');
+        host.id = OVERLAY_ID;
+        host.setAttribute('aria-hidden', 'true');
+        host.style.cssText = 'all:initial;position:fixed;inset:0;z-index:2147483647;pointer-events:none;';
+        const sh = host.attachShadow({ mode: 'open' });
+        sh.innerHTML = '<style>' +
+          '.frame{position:fixed;inset:0;border:3px solid #7c5cff;box-shadow:inset 0 0 28px rgba(124,92,255,.45);pointer-events:none;animation:akp 1.8s ease-in-out infinite}' +
+          '@keyframes akp{0%,100%{opacity:.5}50%{opacity:1}}' +
+          '.bar{position:fixed;top:0;left:50%;transform:translateX(-50%);background:#1d1933;color:#fff;font:12px/1.4 system-ui,sans-serif;padding:5px 12px;border-radius:0 0 10px 10px;display:flex;gap:10px;align-items:center;pointer-events:auto;box-shadow:0 2px 10px rgba(0,0,0,.35);max-width:70vw}' +
+          '.bar b{color:#c9b8ff;white-space:nowrap}.msg{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}' +
+          'button{all:initial;cursor:pointer;background:#ff5370;color:#fff;font:600 12px system-ui,sans-serif;padding:3px 10px;border-radius:6px}' +
+          '.ring{position:fixed;width:28px;height:28px;margin:-14px 0 0 -14px;border:3px solid #ffd166;border-radius:50%;pointer-events:none;animation:akr .7s ease-out forwards}' +
+          '@keyframes akr{from{transform:scale(.4);opacity:1}to{transform:scale(1.7);opacity:0}}' +
+          '</style><div class="frame"></div><div class="bar"><b></b><span class="msg"></span><button>Dừng</button></div>';
+        sh.querySelector('button').onclick = () => {
+          try { chrome.runtime.sendMessage({ type: 'agent-stop' }); } catch { /* no runtime */ }
+          sh.querySelector('.msg').textContent = 'Đã dừng. Mở popup extension để tiếp tục.';
+        };
+        (d.body || d.documentElement).appendChild(host);
+      }
+      host.shadowRoot.querySelector('b').textContent = args.agent || 'AI agent';
+      if (args.text != null) host.shadowRoot.querySelector('.msg').textContent = args.text;
+      if (typeof args.x === 'number' && typeof args.y === 'number') {
+        const ring = d.createElement('div');
+        ring.className = 'ring';
+        ring.style.left = args.x + 'px';
+        ring.style.top = args.y + 'px';
+        host.shadowRoot.appendChild(ring);
+        setTimeout(() => ring.remove(), 800);
+      }
+      return { ok: true };
+    }
+
     case 'snapshot':
       return snapshot(args.mode || 'full', args.maxLines || 600);
 
@@ -153,7 +298,7 @@ export function agentDom(action, args) {
       if (!el) return notFound(args.ref);
       el.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' });
       const c = center(el);
-      const top = d.elementFromPoint(c.x, c.y);
+      const top = withOverlayHidden(() => d.elementFromPoint(c.x, c.y));
       const covered = !!(top && top !== el && !el.contains(top) && !top.contains(el));
       return { ...c, covered, tag: el.tagName.toLowerCase(), name: trunc(nameOf(el), 60) };
     }
@@ -246,7 +391,7 @@ export function agentDom(action, args) {
       return { ok: true };
 
     case 'scrollInfo':
-      return { scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight };
+      return { scrollX: Math.round(w.scrollX), scrollY: Math.round(w.scrollY), pageHeight: d.documentElement.scrollHeight, viewportHeight: w.innerHeight, viewportWidth: w.innerWidth };
 
     default:
       return { error: 'Unknown DOM action: ' + action };

@@ -31,7 +31,8 @@ function fakeExtension() {
           click: { x: 10, y: 20, covered: false, target: 'Sign in', ...page },
           find: { url: page.url, matches: [{ score: 13, line: '[ref_1] button "Sign in"' }] },
           form_input: { results: [{ ref: 'ref_1', ok: true, name: 'Email' }] },
-          evaluate: { type: 'object', value: { a: 1 } }
+          evaluate: { type: 'object', value: { a: 1 } },
+          type: { typed: 3, into: 'Email', via: 'dom' }
         };
         if (msg.method === 'navigate' && msg.params.url === 'chrome://bad') return ws.send(JSON.stringify({ id: msg.id, ok: false, error: 'Site not allowed: chrome://bad' }));
         if (msg.method === 'navigate') return ws.send(JSON.stringify({ id: msg.id, ok: true, result: { tabId: msg.params.tabId, ...page } }));

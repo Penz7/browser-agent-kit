@@ -136,7 +136,7 @@ def('computer', {
       const clickCount = a.action === 'double_click' ? 2 : a.action === 'triple_click' ? 3 : 1;
       const r = await bridge.request('click', { tabId: tab, ...pt, ref: a.ref, button, clickCount, modifiers: a.modifiers, ...mw });
       const where = a.ref ? `${a.ref}${r.target ? ` ("${r.target}")` : ''}` : `(${Math.round(r.x)}, ${Math.round(r.y)}) css px`;
-      return after(tab, `${a.action} on ${where}${r.covered ? '. Warning: another element was on top of the target, the click may have hit it instead' : ''}. Page: "${r.title || ''}" ${r.url}`);
+      return after(tab, `${a.action} on ${where}${r.covered ? '. Warning: another element was on top of the target, the click may have hit it instead' : ''}${r.hint ? '. ' + r.hint : ''}. Page: "${r.title || ''}" ${r.url}`);
     }
     case 'left_click_drag': {
       if (!a.start_coordinate || !a.coordinate) throw new Error('left_click_drag needs start_coordinate and coordinate');
@@ -150,8 +150,8 @@ def('computer', {
     }
     case 'type': {
       if (a.text == null) throw new Error('type needs text');
-      await bridge.request('type', { tabId: tab, text: a.text }, 120000);
-      return after(tab, `Typed ${a.text.length} characters.`);
+      const r = await bridge.request('type', { tabId: tab, text: a.text }, 120000);
+      return after(tab, `Typed ${a.text.length} characters${r && r.into ? ` into "${r.into}"` : ''}.`);
     }
     case 'key': {
       if (!a.text) throw new Error('key needs text, e.g. "Enter" or "ctrl+a"');

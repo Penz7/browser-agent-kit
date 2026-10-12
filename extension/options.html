@@ -36,6 +36,29 @@
   </select>
   <div class="hint">Dialogs block all browser events, so the kit always closes them automatically.</div>
 
+  <label for="inputMode">Input mode</label>
+  <select id="inputMode">
+    <option value="fast">Fast (default): DOM events, no debugger for click/type/scroll/screenshot</option>
+    <option value="real">Real: every input goes through the Chrome debugger (CDP)</option>
+  </select>
+  <div class="hint">Fast mode avoids the "is debugging this browser" bar for most actions. Switch to Real if a site ignores synthetic clicks.</div>
+
+  <label for="idleDetach">Release debugger after idle (seconds)</label>
+  <input type="number" id="idleDetach" min="0" max="3600">
+  <div class="hint">0 keeps it attached (needed if you want console/network capture to run continuously).</div>
+
+  <label><input type="checkbox" id="overlay"> Show glowing frame + status bar on the tab being controlled</label>
+  <label for="overlayName">Name shown in the status bar</label>
+  <input type="text" id="overlayName" placeholder="AI agent">
+
+  <label><input type="checkbox" id="groupTabs"> Put tabs the agent opens into a tab group</label>
+  <label for="groupName">Tab group name</label>
+  <input type="text" id="groupName" placeholder="Agent">
+  <label for="groupColor">Tab group color</label>
+  <select id="groupColor">
+    <option>purple</option><option>blue</option><option>cyan</option><option>green</option><option>yellow</option><option>orange</option><option>red</option><option>pink</option><option>grey</option>
+  </select>
+
   <button id="save">Save</button><span id="saved"></span>
   <script type="module" src="options.js"></script>
 </body>

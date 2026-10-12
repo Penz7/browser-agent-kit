@@ -11,6 +11,7 @@ async function refresh() {
   $('status').textContent = status && status.connected
     ? `Connected to MCP server on port ${status.port}`
     : `Not connected (port ${status ? status.port : s.port}). Start an agent that uses the MCP server.`;
+  $('pausedRow').style.display = status && status.paused ? '' : 'none';
   const [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   url = (tab && tab.url) || '';
   try { host = new URL(url).hostname; } catch { host = ''; }
@@ -33,6 +34,7 @@ $('removeSite').onclick = async () => {
   refresh();
 };
 $('allowAll').onchange = async (e) => { await setSettings({ allowAll: e.target.checked }); refresh(); };
+$('resume').onclick = async () => { await chrome.runtime.sendMessage({ type: 'resume' }); refresh(); };
 $('reconnect').onclick = async () => { await chrome.runtime.sendMessage({ type: 'reconnect' }); setTimeout(refresh, 1500); };
 $('options').onclick = (e) => { e.preventDefault(); chrome.runtime.openOptionsPage(); };
 
